@@ -1,0 +1,50 @@
+2026-08-28 17:24:27.149 | INFO     | 02-日志测试.py          :<module>       :26   - 用户 ID: 1001 登录成功
+2026-08-28 17:24:27.238 | INFO     | 02-日志测试.py          :<module>       :27   - 订单 #9527 已创建，金额：¥299.00
+2026-08-28 17:24:27.239 | INFO     | 02-日志测试.py          :<module>       :28   - 系统健康检查通过
+2026-08-28 17:24:27.240 | SUCCESS  | 02-日志测试.py          :<module>       :33   - 数据备份完成！文件已保存至 /backup/2026-03-15.zip
+2026-08-28 17:24:27.241 | SUCCESS  | 02-日志测试.py          :<module>       :34   - 模型训练结束，准确率达到 98.5%
+2026-08-28 17:24:27.241 | WARNING  | 02-日志测试.py          :<module>       :39   - 配置文件缺少 'TIMEOUT' 字段，使用默认值 30s
+2026-08-28 17:24:27.242 | WARNING  | 02-日志测试.py          :<module>       :40   - 检测到 API 响应时间超过 2s，性能可能下降
+2026-08-28 17:24:27.242 | WARNING  | 02-日志测试.py          :<module>       :41   - 用户密码强度较弱，建议修改
+2026-08-28 17:24:27.243 | ERROR    | 02-日志测试.py          :<module>       :46   - 无法连接到 Redis 服务器：Connection refused
+2026-08-28 17:24:27.244 | ERROR    | 02-日志测试.py          :<module>       :47   - 用户 ID: 1002 的数据解析失败，跳过该记录
+2026-08-28 17:24:27.244 | CRITICAL | 02-日志测试.py          :<module>       :52   - 磁盘空间已满！无法写入任何新数据，系统即将停止服务
+2026-08-28 17:24:27.245 | CRITICAL | 02-日志测试.py          :<module>       :53   - 核心加密密钥丢失，安全模块初始化失败
+2026-08-28 17:24:27.246 | ERROR    | 02-日志测试.py          :<module>       :68   - An error has been caught in function '<module>', process 'MainProcess' (29484), thread 'MainThread' (8016):
+Traceback (most recent call last):
+
+> File "D:\WorkProjects\Knowledge_Base\test\02-日志测试.py", line 68, in <module>
+    divide(10, 0)
+    └ <function divide at 0x0000011E3CBBC720>
+
+  File "D:\WorkProjects\Knowledge_Base\test\02-日志测试.py", line 58, in divide
+    return a / b
+           │   └ 0
+           └ 10
+
+ZeroDivisionError: division by zero
+2026-08-28 17:26:04.966 | INFO     | 02-日志测试.py          :<module>       :26   - 用户 ID: 1001 登录成功
+2026-08-28 17:26:05.046 | INFO     | 02-日志测试.py          :<module>       :27   - 订单 #9527 已创建，金额：¥299.00
+2026-08-28 17:26:05.047 | INFO     | 02-日志测试.py          :<module>       :28   - 系统健康检查通过
+2026-08-28 17:26:05.048 | SUCCESS  | 02-日志测试.py          :<module>       :33   - 数据备份完成！文件已保存至 /backup/2026-03-15.zip
+2026-08-28 17:26:05.049 | SUCCESS  | 02-日志测试.py          :<module>       :34   - 模型训练结束，准确率达到 98.5%
+2026-08-28 17:26:05.049 | WARNING  | 02-日志测试.py          :<module>       :39   - 配置文件缺少 'TIMEOUT' 字段，使用默认值 30s
+2026-08-28 17:26:05.050 | WARNING  | 02-日志测试.py          :<module>       :40   - 检测到 API 响应时间超过 2s，性能可能下降
+2026-08-28 17:26:05.050 | WARNING  | 02-日志测试.py          :<module>       :41   - 用户密码强度较弱，建议修改
+2026-08-28 17:26:05.051 | ERROR    | 02-日志测试.py          :<module>       :46   - 无法连接到 Redis 服务器：Connection refused
+2026-08-28 17:26:05.051 | ERROR    | 02-日志测试.py          :<module>       :47   - 用户 ID: 1002 的数据解析失败，跳过该记录
+2026-08-28 17:26:05.052 | CRITICAL | 02-日志测试.py          :<module>       :52   - 磁盘空间已满！无法写入任何新数据，系统即将停止服务
+2026-08-28 17:26:05.052 | CRITICAL | 02-日志测试.py          :<module>       :53   - 核心加密密钥丢失，安全模块初始化失败
+2026-08-28 17:26:05.053 | ERROR    | 02-日志测试.py          :<module>       :68   - An error has been caught in function '<module>', process 'MainProcess' (35500), thread 'MainThread' (34864):
+Traceback (most recent call last):
+
+> File "D:\WorkProjects\Knowledge_Base\test\02-日志测试.py", line 68, in <module>
+    divide(10, 0)
+    └ <function divide at 0x000001A63793C720>
+
+  File "D:\WorkProjects\Knowledge_Base\test\02-日志测试.py", line 58, in divide
+    return a / b
+           │   └ 0
+           └ 10
+
+ZeroDivisionError: division by zero

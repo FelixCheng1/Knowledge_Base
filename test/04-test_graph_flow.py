@@ -2,7 +2,7 @@ import json
 
 import sys
 from pathlib import Path
-
+from IPython.display import display
 # 以脚本方式运行时，把项目根目录加入 sys.path，才能导入 app 包
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -28,5 +28,5 @@ logger.info(f"最终状态: \n {json.dumps(final_state, indent=4, ensure_ascii=F
 logger.info("图结构:")
 # uv add grandalf
 kb_import_app.get_graph().print_ascii()
-
+display(kb_import_app)
 logger.info("===== 测试结束 =====")

@@ -1,0 +1,117 @@
+2026-08-31 09:11:25.736 | INFO     | state.py            :<module>       :75   - {'task_id': '', 'is_md_read_enabled': False, 'is_pdf_read_enabled': False, 'local_dir': '', 'local_file_path': '万用表RS-2的使用.pdf', 'pdf_path': '', 'md_path': '', 'file_title': '', 'md_content': '', 'chunks': [], 'item_name': '', 'embedings_content': []}
+2026-08-31 09:13:53.874 | INFO     | state.py            :<module>       :75   - {'task_id': '', 'is_md_read_enabled': False, 'is_pdf_read_enabled': False, 'local_dir': '', 'local_file_path': '万用表RS-2的使用.pdf', 'pdf_path': '', 'md_path': '', 'file_title': '', 'md_content': '', 'chunks': [], 'item_name': '', 'embedings_content': []}
+2026-08-31 09:14:03.583 | INFO     | state.py            :<module>       :75   - {'task_id': '', 'is_md_read_enabled': False, 'is_pdf_read_enabled': False, 'local_dir': '', 'local_file_path': '万用表RS-2的使用.pdf', 'pdf_path': '', 'md_path': '', 'file_title': '', 'md_content': '', 'chunks': [], 'item_name': '', 'embedings_content': []}
+2026-08-31 10:23:14.481 | INFO     | 04-test_graph_flow.py:<module>       :14   - ===== 开始测试 =====
+2026-08-31 10:23:14.876 | INFO     | _runnable.py        :invoke         :447  - [node_entry] 节点开始，追踪ID=-
+2026-08-31 10:23:14.883 | INFO     | _runnable.py        :invoke         :447  - [node_entry] 节点完成，追踪ID=-，耗时=7ms
+2026-08-31 10:23:14.888 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_entry
+2026-08-31 10:23:14.891 | INFO     | _runnable.py        :invoke         :447  - [node_pdf_to_md] 节点开始，追踪ID=-
+2026-08-31 10:23:14.895 | INFO     | _runnable.py        :invoke         :447  - [node_pdf_to_md] 节点完成，追踪ID=-，耗时=3ms
+2026-08-31 10:23:14.900 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_pdf_to_md
+2026-08-31 10:23:14.904 | INFO     | _runnable.py        :invoke         :447  - [node_md_img] 节点开始，追踪ID=-
+2026-08-31 10:23:14.908 | INFO     | _runnable.py        :invoke         :447  - [node_md_img] 节点完成，追踪ID=-，耗时=3ms
+2026-08-31 10:23:14.912 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_md_img
+2026-08-31 10:23:14.915 | INFO     | _runnable.py        :invoke         :447  - [node_document_split] 节点开始，追踪ID=-
+2026-08-31 10:23:14.919 | INFO     | _runnable.py        :invoke         :447  - [node_document_split] 节点完成，追踪ID=-，耗时=3ms
+2026-08-31 10:23:14.924 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_document_split
+2026-08-31 10:23:14.928 | INFO     | _runnable.py        :invoke         :447  - [node_item_name_recognition] 节点开始，追踪ID=-
+2026-08-31 10:23:14.932 | INFO     | _runnable.py        :invoke         :447  - [node_item_name_recognition] 节点完成，追踪ID=-，耗时=4ms
+2026-08-31 10:23:14.937 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_item_name_recognition
+2026-08-31 10:23:14.941 | INFO     | _runnable.py        :invoke         :447  - [node_bge_embedding] 节点开始，追踪ID=-
+2026-08-31 10:23:14.944 | INFO     | _runnable.py        :invoke         :447  - [node_bge_embedding] 节点完成，追踪ID=-，耗时=3ms
+2026-08-31 10:23:14.949 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_bge_embedding
+2026-08-31 10:23:14.952 | INFO     | _runnable.py        :invoke         :447  - [node_import_milvus] 节点开始，追踪ID=-
+2026-08-31 10:23:14.956 | INFO     | _runnable.py        :invoke         :447  - [node_import_milvus] 节点完成，追踪ID=-，耗时=4ms
+2026-08-31 10:23:14.962 | INFO     | 04-test_graph_flow.py:<module>       :22   - 节点: node_import_milvus
+2026-08-31 10:23:14.966 | INFO     | 04-test_graph_flow.py:<module>       :26   - 最终状态: 
+ {
+    "is_md_read_enabled": false,
+    "is_pdf_read_enabled": true,
+    "local_dir": "",
+    "local_file_path": "万用表RS-12的使用.pdf",
+    "file_title": "",
+    "pdf_path": "",
+    "md_path": "",
+    "md_content": "",
+    "chunks": [],
+    "item_name": "",
+    "embedings_content": []
+}
+2026-08-31 10:23:14.969 | INFO     | 04-test_graph_flow.py:<module>       :28   - 图结构:
+2026-08-31 10:23:15.906 | INFO     | 04-test_graph_flow.py:<module>       :32   - ===== 测试结束 =====
+2026-08-31 10:24:11.137 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :14   - ===== 开始测试 =====
+2026-08-31 10:24:11.462 | INFO     | _runnable.py        :invoke         :447  - [node_entry] 节点开始，追踪ID=-
+2026-08-31 10:24:11.476 | INFO     | _runnable.py        :invoke         :447  - [node_entry] 节点完成，追踪ID=-，耗时=14ms
+2026-08-31 10:24:11.486 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_entry
+2026-08-31 10:24:11.499 | INFO     | _runnable.py        :invoke         :447  - [node_pdf_to_md] 节点开始，追踪ID=-
+2026-08-31 10:24:11.510 | INFO     | _runnable.py        :invoke         :447  - [node_pdf_to_md] 节点完成，追踪ID=-，耗时=10ms
+2026-08-31 10:24:11.526 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_pdf_to_md
+2026-08-31 10:24:11.538 | INFO     | _runnable.py        :invoke         :447  - [node_md_img] 节点开始，追踪ID=-
+2026-08-31 10:24:11.551 | INFO     | _runnable.py        :invoke         :447  - [node_md_img] 节点完成，追踪ID=-，耗时=12ms
+2026-08-31 10:24:11.564 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_md_img
+2026-08-31 10:24:11.576 | INFO     | _runnable.py        :invoke         :447  - [node_document_split] 节点开始，追踪ID=-
+2026-08-31 10:24:11.587 | INFO     | _runnable.py        :invoke         :447  - [node_document_split] 节点完成，追踪ID=-，耗时=10ms
+2026-08-31 10:24:11.600 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_document_split
+2026-08-31 10:24:11.610 | INFO     | _runnable.py        :invoke         :447  - [node_item_name_recognition] 节点开始，追踪ID=-
+2026-08-31 10:24:11.622 | INFO     | _runnable.py        :invoke         :447  - [node_item_name_recognition] 节点完成，追踪ID=-，耗时=11ms
+2026-08-31 10:24:11.633 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_item_name_recognition
+2026-08-31 10:24:11.646 | INFO     | _runnable.py        :invoke         :447  - [node_bge_embedding] 节点开始，追踪ID=-
+2026-08-31 10:24:11.656 | INFO     | _runnable.py        :invoke         :447  - [node_bge_embedding] 节点完成，追踪ID=-，耗时=10ms
+2026-08-31 10:24:11.668 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_bge_embedding
+2026-08-31 10:24:11.677 | INFO     | _runnable.py        :invoke         :447  - [node_import_milvus] 节点开始，追踪ID=-
+2026-08-31 10:24:11.688 | INFO     | _runnable.py        :invoke         :447  - [node_import_milvus] 节点完成，追踪ID=-，耗时=11ms
+2026-08-31 10:24:11.703 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :22   - 节点: node_import_milvus
+2026-08-31 10:24:11.714 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :26   - 最终状态: 
+ {
+    "is_md_read_enabled": false,
+    "is_pdf_read_enabled": true,
+    "local_dir": "",
+    "local_file_path": "万用表RS-12的使用.pdf",
+    "file_title": "",
+    "pdf_path": "",
+    "md_path": "",
+    "md_content": "",
+    "chunks": [],
+    "item_name": "",
+    "embedings_content": []
+}
+2026-08-31 10:24:11.725 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :28   - 图结构:
+2026-08-31 10:24:11.856 | INFO     | <ipython-input-1-5d1e767653ad>:<module>       :32   - ===== 测试结束 =====
+2026-08-31 10:24:47.043 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :14   - ===== 开始测试 =====
+2026-08-31 10:24:47.296 | INFO     | _runnable.py        :invoke         :447  - [node_entry] 节点开始，追踪ID=-
+2026-08-31 10:24:47.307 | INFO     | _runnable.py        :invoke         :447  - [node_entry] 节点完成，追踪ID=-，耗时=11ms
+2026-08-31 10:24:47.319 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_entry
+2026-08-31 10:24:47.329 | INFO     | _runnable.py        :invoke         :447  - [node_pdf_to_md] 节点开始，追踪ID=-
+2026-08-31 10:24:47.343 | INFO     | _runnable.py        :invoke         :447  - [node_pdf_to_md] 节点完成，追踪ID=-，耗时=14ms
+2026-08-31 10:24:47.356 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_pdf_to_md
+2026-08-31 10:24:47.366 | INFO     | _runnable.py        :invoke         :447  - [node_md_img] 节点开始，追踪ID=-
+2026-08-31 10:24:47.377 | INFO     | _runnable.py        :invoke         :447  - [node_md_img] 节点完成，追踪ID=-，耗时=11ms
+2026-08-31 10:24:47.388 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_md_img
+2026-08-31 10:24:47.398 | INFO     | _runnable.py        :invoke         :447  - [node_document_split] 节点开始，追踪ID=-
+2026-08-31 10:24:47.408 | INFO     | _runnable.py        :invoke         :447  - [node_document_split] 节点完成，追踪ID=-，耗时=9ms
+2026-08-31 10:24:47.416 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_document_split
+2026-08-31 10:24:47.425 | INFO     | _runnable.py        :invoke         :447  - [node_item_name_recognition] 节点开始，追踪ID=-
+2026-08-31 10:24:47.439 | INFO     | _runnable.py        :invoke         :447  - [node_item_name_recognition] 节点完成，追踪ID=-，耗时=13ms
+2026-08-31 10:24:47.450 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_item_name_recognition
+2026-08-31 10:24:47.458 | INFO     | _runnable.py        :invoke         :447  - [node_bge_embedding] 节点开始，追踪ID=-
+2026-08-31 10:24:47.470 | INFO     | _runnable.py        :invoke         :447  - [node_bge_embedding] 节点完成，追踪ID=-，耗时=11ms
+2026-08-31 10:24:47.480 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_bge_embedding
+2026-08-31 10:24:47.489 | INFO     | _runnable.py        :invoke         :447  - [node_import_milvus] 节点开始，追踪ID=-
+2026-08-31 10:24:47.497 | INFO     | _runnable.py        :invoke         :447  - [node_import_milvus] 节点完成，追踪ID=-，耗时=7ms
+2026-08-31 10:24:47.506 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :22   - 节点: node_import_milvus
+2026-08-31 10:24:47.516 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :26   - 最终状态: 
+ {
+    "is_md_read_enabled": false,
+    "is_pdf_read_enabled": true,
+    "local_dir": "",
+    "local_file_path": "万用表RS-12的使用.pdf",
+    "file_title": "",
+    "pdf_path": "",
+    "md_path": "",
+    "md_content": "",
+    "chunks": [],
+    "item_name": "",
+    "embedings_content": []
+}
+2026-08-31 10:24:47.526 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :28   - 图结构:
+2026-08-31 10:24:49.394 | INFO     | <ipython-input-1-d606f8a49392>:<module>       :32   - ===== 测试结束 =====

@@ -6,7 +6,7 @@ class ImportGraphState(TypedDict):
     """
     图的状态定义，包含所有节点和消费的数据字段
     """
-    task_id = str       #任务唯一ID，用于追踪任务
+    task_id:str       #任务唯一ID，用于追踪任务
 
     # —————— 流程控制标记 ——————
     is_md_read_enabled:bool     # 是否启用Markdown读取路径

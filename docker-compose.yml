@@ -1,0 +1,38 @@
+# ============================================================
+# 知识库项目 - 本地开发中间件编排（仅 MinIO）
+#
+# 说明:
+#   - 官方 MinIO 已停止维护(2026-04 仓库归档), 这里固定最后一个稳定版
+#   - 社区版 Web 控制台(9001)仅剩对象浏览, 权限/用户管理请用 mc 命令行
+#   - 密钥从项目根目录 .env 读取(MINIO_ACCESS_KEY / MINIO_SECRET_KEY), 未配置时兜底 minioadmin
+#
+# 常用命令:
+#   启动:  docker compose up -d
+#   停止:  docker compose down        (保留数据卷)
+#   清空:  docker compose down -v     (删除数据卷, 慎用)
+#   日志:  docker compose logs -f minio
+# ============================================================
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-06-13T11-33-47Z
+    container_name: knowledge-base-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # S3 API —— Python SDK (minio_utils.py) 连接用
+      - "9001:9001"   # Web 控制台 (社区版仅对象浏览, 管理走 mc)
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data   # 数据持久化; Windows 上用命名卷避免文件权限问题
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  minio_data:

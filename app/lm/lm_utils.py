@@ -20,14 +20,14 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> Chat
     适配OpenAI/千问/即梦AI等**OpenAI兼容API**，支持自定义模型和JSON标准化输出
     核心特性：缓存机制+配置统一加载+异常精准捕获+国产模型参数适配
 
-    :param model: 模型名称，优先级：传入参数 > 配置文件lm_config.llm_model > 内置默认qwen3-32b
+    :param model: 模型名称，优先级：传入参数 > 配置文件lm_config.llm_model > 内置默认deepseek-v4-flash
     :param json_mode: 是否开启JSON输出模式，开启后返回标准json_object格式（适配结构化数据解析）
     :return: 初始化完成的ChatOpenAI实例（优先从全局缓存获取，未命中则新建并缓存）
     :raise ValueError: 缺失API密钥/基础地址等核心配置
     :raise Exception: 模型初始化失败（LangChain封装层异常）
     """
     # 1. 确定目标模型（优先级递减，保证模型名非空）
-    target_model = model or lm_config.llm_model or "qwen3-32b"
+    target_model = model or lm_config.llm_model or "deepseek-v4-flash"
     # 缓存键：模型名+JSON模式，唯一标识不同配置的客户端
     cache_key = (target_model, json_mode)
 

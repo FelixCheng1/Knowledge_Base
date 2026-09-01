@@ -47,3 +47,6 @@ Thumbs.db
 # 忽略该目录后,其他人 clone 需自行下载 wheel 放入其中,否则 uv sync 会失败
 # 若想保证 clone 后即可同步,请删掉下面这行并把 _wheels/ 提交到仓库
 _wheels/
+
+# ============ pdf2md output ============
+output/

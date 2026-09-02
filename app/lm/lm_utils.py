@@ -60,7 +60,7 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> Chat
             temperature=lm_config.llm_temperature or 0.1,  # 低温度保证输出确定性（0~1）
             api_key=lm_config.api_key,  # API密钥
             base_url=lm_config.base_url,  # API基础地址（适配国产模型代理地址）
-            extra_body=extra_body,  # 国产模型私有参数透传
+            # extra_body=extra_body,  # 国产模型私有参数透传
             model_kwargs=model_kwargs,  # OpenAI通用参数
         )
     except LangChainException as e:

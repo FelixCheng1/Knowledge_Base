@@ -7,7 +7,7 @@ from app.core.logger import logger
 _milvus_client = None
 
 
-def get_milvus_client():
+def get_milvus_client() -> MilvusClient | None:
     """
     Milvus客户端单例获取方法
     实现客户端连接复用，避免重复创建连接消耗资源

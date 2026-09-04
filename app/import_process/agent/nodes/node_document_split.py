@@ -27,7 +27,7 @@ def step_1_get_content(state:ImportGraphState) -> Tuple[str, str]:
     Returns:
         (MD文件, title)
     """
-    md_content = state.get('md_content', '')
+    md_content = state.get('md_content', '').strip()
     file_title = state.get("file_title") or "default_file"
     if not md_content:
         logger.error("没有输出内容，请检查输入内容是否正确！")

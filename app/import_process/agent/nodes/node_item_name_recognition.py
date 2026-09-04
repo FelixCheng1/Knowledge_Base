@@ -49,7 +49,7 @@ CONTEXT_TOTAL_MAX_CHARS = 2500
      6. 存储向量到向量数据库 kb_item_name (id / file_title / item_name / 稠密 和 稀疏)
  """
 @step_log("step_1_get_chunks_and_file_title")
-def step_1_get_chunks_and_file_title(state:ImportGraphState) -> Tuple[str,str]:
+def step_1_get_chunks_and_file_title(state:ImportGraphState) -> Tuple[list,str]:
     """
     进行参数校验和处理
     Args:
@@ -204,7 +204,7 @@ def step_6_save_to_vector_db(file_title, item_name, dense_vector, sparse_vector)
         # 添加约束
         schema = milvus_client.create_schema(
             auto_id  = True,
-            enable_dynamic_fiele = True
+            enable_dynamic_field = True
         )
         schema.add_field(field_name="pk", datatype=DataType.INT64, is_primary=True,auto_id=True)
         schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length =65535)
@@ -237,7 +237,7 @@ def step_6_save_to_vector_db(file_title, item_name, dense_vector, sparse_vector)
     # 删除之前存在的item_name
     milvus_client.delete(
         collection_name=milvus_config.item_name_collection,
-        filter = f"item_name=='{item_name}'"
+        filter = f'item_name=="{escape_milvus_string(item_name)}"'
     )
     # 4. 向集合插入新的数据
     item = {

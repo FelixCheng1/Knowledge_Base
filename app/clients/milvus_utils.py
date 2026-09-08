@@ -155,11 +155,12 @@ def create_hybrid_search_requests(dense_vector, sparse_vector, dense_params=None
     return [dense_req, sparse_req]
 
 
-def hybrid_search(client, collection_name, reqs, ranker_weights=(0.5, 0.5), norm_score=False, limit=5,
+def hybrid_search(client:MilvusClient, collection_name, reqs, ranker_weights=(0.5, 0.5), norm_score=False, limit=5,
                   output_fields=None, search_params=None):
     """
     执行Milvus稠密+稀疏向量混合搜索
     基于WeightedRanker实现双向量搜索结果加权融合，提升检索准确性
+
     :param client: MilvusClient实例
     :param collection_name: 集合名称
     :param reqs: 搜索请求列表，固定为[dense_req, sparse_req]

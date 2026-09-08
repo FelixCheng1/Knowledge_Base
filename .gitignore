@@ -50,3 +50,6 @@ _wheels/
 
 # ============ pdf2md output ============
 output/
+
+# Local SSE examples
+/sse/

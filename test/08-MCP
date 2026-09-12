@@ -1,0 +1,33 @@
+import asyncio
+import json
+import os
+
+from dotenv import load_dotenv
+from agents.mcp import MCPServerStreamableHttp
+
+load_dotenv(override=True)
+
+
+async def main():
+    async with MCPServerStreamableHttp(
+        name="tavily-mcp",
+        params={
+            "url": os.environ["MCP_WEB_SEARCH_URL"],
+            "timeout": 30,
+            "sse_read_timeout": 120,
+        },
+        client_session_timeout_seconds=120,
+    ) as server:
+        tools = await server.list_tools()
+
+        for tool in tools:
+            print("工具名:", tool.name)
+            print("说明:", tool.description)
+            print(
+                "参数:",
+                json.dumps(tool.inputSchema, ensure_ascii=False, indent=2),
+            )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

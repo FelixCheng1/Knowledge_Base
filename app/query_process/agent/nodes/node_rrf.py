@@ -17,7 +17,7 @@ def _as_entity_list(chunks:list) -> List[Dict[str,Any]]:
         # ==============================================
         # 情况A：处理 Milvus 返回的 Hit 对象（含 entity、id、distance）
         # ==============================================
-        if hasattr(chunk, "entity") and hasattr(chunk, "chunk_id"):
+        if hasattr(chunk, "entity") and hasattr(chunk, "distance"):
             # 提取entity内容
             entity = chunk.entity
             if hasattr(entity, "to_dict"):
@@ -31,9 +31,9 @@ def _as_entity_list(chunks:list) -> List[Dict[str,Any]]:
                 except:
                     pass
 
-            # 补充唯一ID
+            # 补充唯一ID（Milvus Hit 对象的属性是 id，不是 chunkid）
             if "chunk_id" not in final_entity:
-                final_entity["id"] = chunk.chunkid
+                final_entity["id"] = getattr(chunk, "id", None)
             # 补充相似性
             if hasattr(chunk, "distance"):
                 final_entity["score"] = chunk.distance
@@ -93,10 +93,13 @@ def step_2_rrf(
     for chunks, weight in source_weights:
         # rank 从 1 开始
         for rank, chunk in enumerate(chunks, start=1):
-            # 获取chunk—id
-            chunk_id = chunk["chunk_id"]
-            # 计算chunk—id所对应的分数
-            score_map[chunk_id] = score_map.get(chunk_id, 0.0) + weight * (1 / (k + rank)) 
+            # 获取chunk_id（兼容 Milvus 实体只返回主键 id 的情况）
+            chunk_id = chunk.get("chunk_id") or chunk.get("id")
+            if chunk_id is None:
+                # 无唯一标识无法参与融合，跳过
+                continue
+            # 计算chunk_id所对应的分数
+            score_map[chunk_id] = score_map.get(chunk_id, 0.0) + weight * (1 / (k + rank))
             # 存储chunk_id 所对应的数据
             chunk_map.setdefault(chunk_id, chunk)
 

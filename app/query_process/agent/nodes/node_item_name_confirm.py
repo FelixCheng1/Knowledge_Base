@@ -4,7 +4,6 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
-from mpmath import limit
 
 from app.core.load_prompt import load_prompt
 from app.query_process.agent.state import QueryGraphState
@@ -34,7 +33,7 @@ def step_3_extract_info(original_query, history) -> Dict:
     """
     # 1. 先获取llm客户端（ 用户提起商品名称和重写查询）
     logger.info("Step 3: 正在初始化 LLM 客户端...")
-    clinet = get_llm_client(json_mode=True)
+    client = get_llm_client(json_mode=True)
     # 构造历史对话文本，拼接为“角色：内容”的格式，供LLM做上下文理解
     history_text = ""
     for msg in history:
@@ -55,7 +54,7 @@ def step_3_extract_info(original_query, history) -> Dict:
     try:
         # 调用LLM客户端，发起请求获取提取结果
         logger.info("Step 3: 正在调用 LLM...")
-        response = clinet.invoke(messages)
+        response = client.invoke(messages)
         logger.info("Step 3: 收到 LLM 响应")
         #提取响应中的文本内容
         content = response.content
@@ -108,7 +107,7 @@ def step_4_vectorize_and_query(item_names:list) -> List[dict]:
     # 校验Miluvs客户端连接是否成功，失败则记录错误日志并返回空结果
     if not client:
         logger.error("获取Miluvs客户端失败")
-        return client
+        return results
 
     # 从环境变量中获取Miluvs中存储商品名称向量的集合名
     collection_name = os.environ.get("ITEM_NAME_COLLECTION")
@@ -327,16 +326,9 @@ def step_7_write_history(state:QueryGraphState, session_id, history, rewritten_q
      :param message_id: 字符串 - 本次用户问题的消息唯一ID（step2生成）
      :return: 字典 - 最终的会话状态（无额外修改，直接返回入参state）
      """
-    # 若会话状态中有助手答案（分支B/C），写入助手消息到历史
-    if state.get("answer"):
-        save_chat_message(
-            session_id=session_id,  # 会话ID，关联所属会话
-            role="assistant",  # 消息角色：助手
-            text=state["answer"],  # 消息内容：向用户确认的提示语/无结果提示语
-            rewritten_query="",  # 助手消息无需改写查询，设为空
-            item_names=state.get("item_names", [])  # 关联的商品名列表（分支B/C均为空）
-        )
-    # 强制更新本次用户原始问题的关联信息
+    # 1.先更新本次用户原始问题的关联信息
+    # 注意：必须先写 user 再写 assistant——save_chat_message 更新/新增都会刷新 ts 时间戳，
+    # 若后写 user，其 ts 会晚于 assistant，导致按 ts 排序后"反问出现在提问之前"的顺序错乱
     save_chat_message(
         session_id=session_id,  # 会话ID，关联所属会话
         role="user",  # 消息角色：用户
@@ -345,6 +337,16 @@ def step_7_write_history(state:QueryGraphState, session_id, history, rewritten_q
         item_names=state.get("item_names", []),  # 补充关联的商品名列表
         message_id=message_id  # 消息ID，指定更新已存在的用户消息（而非新增）
     )
+
+    # 2.若会话状态中有助手答案（分支B/C），写入助手消息到历史
+    if state.get("answer"):
+        save_chat_message(
+            session_id=session_id,  # 会话ID，关联所属会话
+            role="assistant",  # 消息角色：助手
+            text=state["answer"],  # 消息内容：向用户确认的提示语/无结果提示语
+            rewritten_query="",  # 助手消息无需改写查询，设为空
+            item_names=state.get("item_names", [])  # 关联的商品名列表（分支B/C均为空）
+        )
 
     #返回最终的会话状态， 供下流节点使用
     return state

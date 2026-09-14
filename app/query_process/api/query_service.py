@@ -115,7 +115,7 @@ async def health():
     logger.info("健康检查接口调用成功")
     return {"ok": True}
 
-@app("/history/{session_id}")
+@app.get("/history/{session_id}")
 async def history(session_id:str, limit:int = 50):
     """
     查询当前会话的历史记录

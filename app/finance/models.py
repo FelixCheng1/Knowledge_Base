@@ -133,6 +133,23 @@ class QueryRequest(BaseModel):
     stream: bool = True
 
 
+class QuestionUnderstanding(BaseModel):
+    """问题理解结果：意图分类、消解指代后的独立问题、实体与时间范围。
+
+    由 LLM 结构化输出产生，用于驱动检索过滤与回答策略；
+    needs_clarification 为真时其余字段仅供日志参考。
+    """
+    question_type: Literal["fact", "concept", "summary"] = "fact"
+    rewritten_query: str = Field(default="", description="消解指代、补全上下文后的独立问题")
+    mentioned_codes: list[str] = Field(default_factory=list, description="用户显式给出的产品/份额/公司代码")
+    mentioned_names: list[str] = Field(default_factory=list, description="用户显式给出的产品、公司或文档名称")
+    document_type_filter: DocumentType | None = None
+    target_document_title: str | None = Field(default=None, description="摘要类问题的目标文档名称")
+    time_scope: str | None = Field(default=None, description="限定的时间范围，如 2026Q1")
+    needs_clarification: bool = False
+    clarification_question: str = ""
+
+
 class QueryResult(BaseModel):
     query_id: str = Field(default_factory=new_id)
     session_id: str

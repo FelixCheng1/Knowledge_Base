@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import queue
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -203,6 +204,9 @@ def create_query(request: QueryRequest, background_tasks: BackgroundTasks, servi
         result = service.submit_query(request.query, request.session_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    if request.stream:
+        from app.utils.sse_utils import create_sse_queue
+        create_sse_queue(result.query_id)
     background_tasks.add_task(service.answer_query, result.query_id, request.query)
     return result
 
@@ -215,21 +219,44 @@ def get_query(query_id: str, service: FinanceService = Depends(get_service)):
     return result
 
 
-@router.get("/queries/{query_id}/events", tags=["Queries"], summary="订阅问答进度与最终结果", response_class=StreamingResponse, operation_id="streamQueryEvents", responses={200: {"description": "SSE，事件类型为 progress、final 或 error", "content": {"text/event-stream": {}}}})
-async def query_events(query_id: str, service: FinanceService = Depends(get_service)):
+@router.get("/queries/{query_id}/events", tags=["Queries"], summary="订阅问答进度与最终结果", response_class=StreamingResponse, operation_id="streamQueryEvents", responses={200: {"description": "SSE，事件类型为 progress、delta、final 或 error", "content": {"text/event-stream": {}}}})
+async def query_events(query_id: str, request: Request, service: FinanceService = Depends(get_service)):
+    """订阅指定查询的事件流。
+
+    - 后台任务把 progress/delta 事件写入 query_id 对应的队列，这里实时转发；
+    - 断线重连时若 final 已持久化，直接补发 final 后结束，保证不丢结果。
+    """
+    from app.utils.sse_utils import get_sse_queue, remove_sse_queue
+
     async def event_stream():
-        last_status = None
-        while True:
-            result = service.repo.get_query(query_id)
-            if not result:
-                yield "event: error\ndata: {\"error\": \"查询不存在\"}\n\n"
-                return
-            if result.status != last_status:
-                data = result.model_dump(mode="json")
-                yield f"event: progress\ndata: {json.dumps({'status': result.status}, ensure_ascii=False)}\n\n"
-                last_status = result.status
-            if result.status in {"completed", "failed", "clarification_needed"}:
-                yield f"event: final\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-                return
-            await asyncio.sleep(0.5)
+        existing = service.repo.get_query(query_id)
+        if not existing:
+            yield "event: error\ndata: {\"error\": \"查询不存在\"}\n\n"
+            return
+        if existing.status in {"completed", "failed", "clarification_needed"}:
+            # 断线重连或刷新后补发最终结果。
+            yield f"event: final\ndata: {json.dumps(existing.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+            return
+        stream_queue = get_sse_queue(query_id)
+        if stream_queue is None:
+            yield "event: error\ndata: {\"error\": \"该查询未开启流式推送，请直接读取结果接口\"}\n\n"
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await loop.run_in_executor(None, stream_queue.get, True, 1.0)
+                except queue.Empty:
+                    continue
+                event, data = message["event"], message["data"]
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if event in {"final", "error"}:
+                    break
+        except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+            return
+        finally:
+            remove_sse_queue(query_id)
+
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

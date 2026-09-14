@@ -53,3 +53,6 @@ output/
 
 # Local SSE examples
 /sse/
+
+# ============ 文档资料(本地维护,不进仓库) ============
+doc/

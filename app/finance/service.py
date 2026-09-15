@@ -145,13 +145,16 @@ class FinanceService:
         updated = self.repo.update_document(document_id, changes)
         if not updated:
             raise KeyError(document_id)
-        if metadata is not None:
-            self._sync_corrected_metadata(updated, metadata)
+        if metadata is not None or document_type is not None:
+            self._sync_corrected_metadata(updated, metadata or {}, document_type)
         return updated
 
-    def _sync_corrected_metadata(self, document: FinancialDocument, metadata: dict) -> None:
+    def _sync_corrected_metadata(self, document: FinancialDocument, metadata: dict, document_type: str | None = None) -> None:
         """Synchronize manual fields used by version filtering and entity lookup."""
         active = next((version for version in document.versions if version.version_id == document.active_version_id), None)
+        if document_type == DocumentType.EDUCATION or document.document_type == DocumentType.EDUCATION:
+            # 早期分类可能为投教资料创建了产品实体；分类修正后解除文档关联，避免精确查询串入旧实体。
+            document.entity_ids = []
         for field in ("publish_date", "report_period", "effective_date"):
             if field in metadata and active is not None:
                 setattr(active, field, metadata[field])
@@ -166,18 +169,18 @@ class FinanceService:
             if entity.entity_type == "product":
                 if product_name:
                     entity.name = product_name
-                if codes:
-                    entity.code = codes[0]
+                if "codes" in metadata:
+                    entity.code = codes[0] if codes else None
             elif entity.entity_type == "share_class":
                 if share_class_name:
                     entity.name = share_class_name
-                if len(codes) > 1:
-                    entity.code = codes[1]
+                if "codes" in metadata:
+                    entity.code = codes[1] if len(codes) > 1 else None
             elif entity.entity_type == "company":
                 if subject_name:
                     entity.name = subject_name
-                if codes:
-                    entity.code = codes[0]
+                if "codes" in metadata:
+                    entity.code = codes[0] if codes else None
             self.repo.save_entity(entity)
         self.repo.save_document(document)
 
@@ -793,3 +796,4 @@ class FinanceService:
         if not result:
             raise KeyError(query_id)
         return result
+

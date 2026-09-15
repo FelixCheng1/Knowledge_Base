@@ -99,6 +99,19 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.repo.save_entity.assert_called_once_with(entity)
         self.repo.save_document.assert_called_once_with(document)
 
+    def test_education_correction_clears_stale_product_entities(self) -> None:
+        document = FinancialDocument(
+            document_id="doc-education", title="投教问答", document_type="wealth_management",
+            active_version_id="version-1", entity_ids=["entity-1"],
+            versions=[DocumentVersion(version_id="version-1", original_name="问答.pdf", stored_path="问答.pdf", checksum="x")],
+        )
+        self.repo.get_document.return_value = document
+        self.repo.update_document.return_value = document
+        self.service.update_document("doc-education", None, DocumentType.EDUCATION, {"codes": []})
+        self.assertEqual(document.entity_ids, [])
+        self.repo.get_entity.assert_not_called()
+        self.repo.save_document.assert_called_once_with(document)
+
     def test_import_recovery_delegates_to_repository(self) -> None:
         self.repo.interrupt_processing_tasks.return_value = 2
         self.assertEqual(self.service.recover_interrupted_imports(), 2)

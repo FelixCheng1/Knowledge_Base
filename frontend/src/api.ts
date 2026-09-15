@@ -23,12 +23,11 @@ export const api = {
   document: (id: string) => call<Document>(`/documents/${id}`),
   upload: (file: File) => { const form = new FormData(); form.append('file', file); return call<{ document: Document; task: ImportTask }>('/documents', { method: 'POST', body: form }) },
   uploadVersion: (id: string, file: File) => { const form = new FormData(); form.append('file', file); return call<{ document: Document; task: ImportTask }>(`/documents/${id}/versions`, { method: 'POST', body: form }) },
-  patchDocument: (id: string, patch: { title?: string; document_type?: string; metadata?: Record<string, unknown> }) => call<Document>(`/documents/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }),
+  patchDocument: (id: string, patch: { title?: string; document_type?: string; metadata?: Record<string, unknown>; status?: string }) => call<Document>(`/documents/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }),
   task: (id: string) => call<ImportTask>(`/import-tasks/${id}`),
-  retryTask: (id: string) => call<{ task_id: string; status: string }>(`/import-tasks/${id}/retry`, { method: 'POST' }),
-  disable: (id: string) => call<Document>(`/documents/${id}/disable`, { method: 'POST' }),
+  retryTask: (id: string) => call<{ task_id: string; status: string }>(`/import-tasks/${id}/retries`, { method: 'POST' }),
   ask: (query: string, session_id?: string) => call<QueryResult>('/queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, session_id, stream: true }) }),
   result: (id: string) => call<QueryResult>(`/queries/${id}`),
   eventsUrl: (id: string) => `${base}/queries/${id}/events`,
-  fileUrl: (id: string, versionId?: string) => `${base}/documents/${id}/file${versionId ? `?version_id=${encodeURIComponent(versionId)}` : ''}`
+  fileUrl: (id: string, versionId?: string) => versionId ? `${base}/documents/${id}/versions/${encodeURIComponent(versionId)}/file` : `${base}/documents/${id}/file`
 }

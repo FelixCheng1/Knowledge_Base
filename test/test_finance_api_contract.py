@@ -18,6 +18,8 @@ class FinanceApiContractTest(unittest.TestCase):
         paths = self.schema["paths"]
         self.assertTrue(paths)
         self.assertTrue(all(path.startswith("/api/v1/") for path in paths))
+        self.assertNotIn("/api/v1/documents/{document_id}/disable", paths)
+        self.assertNotIn("/api/v1/import-tasks/{task_id}/retry", paths)
         self.assertTrue({
             "/api/v1/health",
             "/api/v1/documents",
@@ -35,10 +37,10 @@ class FinanceApiContractTest(unittest.TestCase):
             ("/api/v1/documents/{document_id}", "get"): "getDocument",
             ("/api/v1/documents/{document_id}/versions", "post"): "createDocumentVersion",
             ("/api/v1/documents/{document_id}", "patch"): "updateDocument",
-            ("/api/v1/documents/{document_id}/disable", "post"): "disableDocument",
-            ("/api/v1/documents/{document_id}/file", "get"): "downloadDocument",
+            ("/api/v1/documents/{document_id}/file", "get"): "downloadActiveDocument",
+            ("/api/v1/documents/{document_id}/versions/{version_id}/file", "get"): "downloadDocumentVersion",
             ("/api/v1/import-tasks/{task_id}", "get"): "getImportTask",
-            ("/api/v1/import-tasks/{task_id}/retry", "post"): "retryImportTask",
+            ("/api/v1/import-tasks/{task_id}/retries", "post"): "createImportTaskRetry",
             ("/api/v1/sessions", "post"): "createSession",
             ("/api/v1/sessions", "get"): "listSessions",
             ("/api/v1/sessions/{session_id}/messages", "get"): "listSessionMessages",
@@ -61,7 +63,7 @@ class FinanceApiContractTest(unittest.TestCase):
             ("/api/v1/documents", "get", "200", "DocumentListResponse"),
             ("/api/v1/documents/{document_id}", "get", "200", "FinancialDocument"),
             ("/api/v1/import-tasks/{task_id}", "get", "200", "ImportTask"),
-            ("/api/v1/import-tasks/{task_id}/retry", "post", "202", "RetryImportResponse"),
+            ("/api/v1/import-tasks/{task_id}/retries", "post", "202", "RetryImportResponse"),
             ("/api/v1/sessions", "post", "201", "Session"),
             ("/api/v1/sessions/{session_id}/messages", "get", "200", "MessageListResponse"),
             ("/api/v1/queries", "post", "202", "QueryResult"),
@@ -78,8 +80,11 @@ class FinanceApiContractTest(unittest.TestCase):
         self.assertIn("409", query_responses)
         document_type = self.schema["components"]["schemas"]["DocumentType"]["enum"]
         self.assertEqual(set(document_type), {"fund_product", "wealth_management", "company_report", "policy", "education_or_faq", "unknown"})
-        file_parameters = self.schema["paths"]["/api/v1/documents/{document_id}/file"]["get"]["parameters"]
-        self.assertIn("version_id", {item["name"] for item in file_parameters})
+        document_patch = self.schema["components"]["schemas"]["DocumentPatch"]["properties"]
+        self.assertIn("status", document_patch)
+        self.assertIn("/api/v1/documents/{document_id}/versions/{version_id}/file", self.schema["paths"])
+        version_file_parameters = self.schema["paths"]["/api/v1/documents/{document_id}/versions/{version_id}/file"]["get"]["parameters"]
+        self.assertIn("version_id", {item["name"] for item in version_file_parameters})
     def test_document_management_contract_exposes_filters_versions_and_file_stream(self) -> None:
         documents = self.schema["paths"]["/api/v1/documents"]
         parameters = {item["name"]: item for item in documents["get"]["parameters"]}
@@ -89,6 +94,8 @@ class FinanceApiContractTest(unittest.TestCase):
         self.assertIn("multipart/form-data", version_upload["requestBody"]["content"])
         file_response = self.schema["paths"]["/api/v1/documents/{document_id}/file"]["get"]["responses"]["200"]
         self.assertIn("application/octet-stream", file_response["content"])
+        version_file_response = self.schema["paths"]["/api/v1/documents/{document_id}/versions/{version_id}/file"]["get"]["responses"]["200"]
+        self.assertIn("application/octet-stream", version_file_response["content"])
     def test_sse_operation_declares_event_stream_content(self) -> None:
         response = self.schema["paths"]["/api/v1/queries/{query_id}/events"]["get"]["responses"]["200"]
         self.assertIn("text/event-stream", response["content"])

@@ -7,7 +7,7 @@ import queue
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -40,6 +40,7 @@ class DocumentPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
     document_type: DocumentType | None = None
     metadata: dict | None = None
+    status: DocumentStatus | None = Field(default=None, description="仅允许将资料停用；启用由导入任务完成后自动设置")
 
 
 def _not_found(resource: str) -> HTTPException:
@@ -123,38 +124,46 @@ async def upload_document_version(
     return {"document": document, "task": task}
 
 
-@router.patch("/documents/{document_id}", tags=["Documents"], summary="修正人工元数据", response_model=FinancialDocument, operation_id="updateDocument", responses={404: {"model": ErrorResponse}})
+@router.patch("/documents/{document_id}", tags=["Documents"], summary="更新资料元数据与状态", response_model=FinancialDocument, operation_id="updateDocument", responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}})
 def patch_document(document_id: str, patch: DocumentPatch, service: FinanceService = Depends(get_service)):
+    if patch.status not in (None, DocumentStatus.DISABLED):
+        raise HTTPException(status_code=422, detail="资料状态只能通过 PATCH 设置为 disabled；启用由导入任务完成后自动设置")
     try:
-        return service.update_document(document_id, patch.title, patch.document_type, patch.metadata)
+        document = service.update_document(document_id, patch.title, patch.document_type, patch.metadata)
+        if patch.status == DocumentStatus.DISABLED:
+            document = service.disable_document(document_id)
+        return document
     except KeyError:
         raise _not_found("资料")
 
 
-@router.post("/documents/{document_id}/disable", tags=["Documents"], summary="停用资料", response_model=FinancialDocument, operation_id="disableDocument", responses={404: {"model": ErrorResponse}})
-def disable_document(document_id: str, service: FinanceService = Depends(get_service)):
-    try:
-        return service.disable_document(document_id)
-    except KeyError:
-        raise _not_found("资料")
-
-
-@router.get("/documents/{document_id}/file", tags=["Documents"], summary="下载原始资料", response_class=FileResponse, operation_id="downloadDocument", responses={200: {"description": "原始文件流", "content": {"application/octet-stream": {}}}, 404: {"model": ErrorResponse}})
-def original_file(document_id: str, version_id: str | None = Query(default=None, min_length=1, max_length=64, description="引用对应的版本 ID；省略时使用活动版本"), service: FinanceService = Depends(get_service)):
+def _document_file_response(document_id: str, version_id: str | None, service: FinanceService):
     document = service.repo.get_document(document_id)
     selected_version_id = version_id or (document.active_version_id if document else None)
     if not document or not selected_version_id:
         raise _not_found("资料文件")
     version = next((item for item in document.versions if item.version_id == selected_version_id), None)
-    if version and Path(version.stored_path).exists():
+    if not version:
+        raise _not_found("资料版本")
+    if Path(version.stored_path).exists():
         return FileResponse(version.stored_path, filename=version.original_name, content_disposition_type="inline")
     try:
-        url = service.original_file_url(document_id, version_id)
+        url = service.original_file_url(document_id, selected_version_id)
     except KeyError:
         url = None
     if not url:
         raise _not_found("资料文件")
     return RedirectResponse(url)
+
+
+@router.get("/documents/{document_id}/file", tags=["Documents"], summary="读取资料当前活动版本原文", response_class=FileResponse, operation_id="downloadActiveDocument", responses={200: {"description": "原始文件流", "content": {"application/octet-stream": {}}}, 404: {"model": ErrorResponse}})
+def original_file(document_id: str, service: FinanceService = Depends(get_service)):
+    return _document_file_response(document_id, None, service)
+
+
+@router.get("/documents/{document_id}/versions/{version_id}/file", tags=["Documents"], summary="读取资料指定版本原文", response_class=FileResponse, operation_id="downloadDocumentVersion", responses={200: {"description": "原始文件流", "content": {"application/octet-stream": {}}}, 404: {"model": ErrorResponse}})
+def version_file(document_id: str, version_id: str, service: FinanceService = Depends(get_service)):
+    return _document_file_response(document_id, version_id, service)
 
 
 @router.get("/import-tasks/{task_id}", tags=["Import tasks"], summary="查询导入任务状态", response_model=ImportTask, operation_id="getImportTask", responses={404: {"model": ErrorResponse}})
@@ -165,7 +174,7 @@ def get_import_task(task_id: str, service: FinanceService = Depends(get_service)
     return task
 
 
-@router.post("/import-tasks/{task_id}/retry", tags=["Import tasks"], summary="重试失败导入任务", response_model=RetryImportResponse, status_code=202, operation_id="retryImportTask", responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
+@router.post("/import-tasks/{task_id}/retries", tags=["Import tasks"], summary="创建导入任务重试", response_model=RetryImportResponse, status_code=202, operation_id="createImportTaskRetry", responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
 def retry_import(task_id: str, background_tasks: BackgroundTasks, service: FinanceService = Depends(get_service)):
     task = service.repo.get_task(task_id)
     if not task:

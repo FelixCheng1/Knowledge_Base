@@ -55,6 +55,10 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist'
+import ReactMarkdown from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize from 'rehype-sanitize'
+import remarkGfm from 'remark-gfm'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { api } from './api'
 import type { Citation, Document, ImportTask, Message, QueryResult, Session } from './types'
@@ -435,7 +439,7 @@ function Chat({ documents, sessions, onRefresh }: { documents: Document[]; sessi
               <Text strong>{item.role === 'user' ? '你' : '掌柜智库'}</Text>
               <Text type="secondary" className="message-time">{formatTime(item.created_at)}</Text>
             </div>
-            <div className="message-body">{item.content || <Space><Spin size="small" /><Text type="secondary">正在整理回答…</Text></Space>}</div>
+            <div className={`message-body ${item.role === 'assistant' ? 'assistant-markdown' : ''}`}>{item.content ? (item.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize]}>{item.content}</ReactMarkdown> : item.content) : <Space><Spin size="small" /><Text type="secondary">正在整理回答…</Text></Space>}</div>
             {item.citations.length > 0 && <div className="message-citations">{item.citations.slice(0, 4).map((citation, index) => <Button key={citation.citation_id} size="small" type="default" icon={<FileSearchOutlined />} onClick={() => openCitation(citation)}>{index + 1} · {citation.title}{citation.locator.page ? ` · 第 ${citation.locator.page} 页` : ''}</Button>)}</div>}
           </article>)}
           {loading && <div className="thinking"><Spin size="small" /><Text type="secondary">{progress || '正在处理'}…</Text></div>}

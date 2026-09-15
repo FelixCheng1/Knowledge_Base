@@ -8,7 +8,7 @@ from pymongo import MongoClient
 
 from app.finance.models import (
     DocumentStatus, FinancialDocument, FinancialEntity, ImportTask, Message, QueryResult, Session,
-    session_title_from_query,
+    now, session_title_from_query,
 )
 
 
@@ -231,12 +231,39 @@ class FinanceRepository:
         return self.queries.count_documents({"session_id": session_id, "status": "processing"}) > 0
 
     def interrupt_processing_queries(self) -> int:
-        query_ids = list(self.queries.find({"status": "processing"}, {"query_id": 1, "session_id": 1}))
-        result = self.queries.update_many({"status": "processing"}, {"$set": {"status": "failed", "error": "服务重启导致查询中断", "updated_at": datetime.utcnow()}})
-        active_query_ids = [item["query_id"] for item in query_ids if item.get("query_id")]
-        if active_query_ids:
-            self.sessions.update_many({"active_query_id": {"$in": active_query_ids}}, {"$set": {"active_query_id": None}})
-        return result.modified_count
+        """将重启时仍在处理的查询收敛为失败，并留下可见的历史消息。
+
+        查询可能在扫描和更新之间自然完成，因此逐条带 ``status=processing``
+        条件更新；只有真正被本次重启中断的查询才会写入失败消息和释放会话占用。
+        """
+        query_records = list(self.queries.find({"status": "processing"}, {"query_id": 1, "session_id": 1}))
+        interrupted_query_ids: list[str] = []
+        interrupted_at = now()
+        for item in query_records:
+            query_id = item.get("query_id")
+            if not query_id:
+                continue
+            result = self.queries.update_one(
+                {"query_id": query_id, "status": "processing"},
+                {"$set": {"status": "failed", "error": "服务重启导致查询中断", "updated_at": interrupted_at}},
+            )
+            if result.modified_count != 1:
+                continue
+            interrupted_query_ids.append(query_id)
+            session_id = item.get("session_id")
+            if session_id:
+                self.messages.insert_one(self._dump(Message(
+                    session_id=session_id,
+                    role="assistant",
+                    content="查询失败：服务重启导致查询中断",
+                    created_at=interrupted_at,
+                )))
+        if interrupted_query_ids:
+            self.sessions.update_many(
+                {"active_query_id": {"$in": interrupted_query_ids}},
+                {"$set": {"active_query_id": None}},
+            )
+        return len(interrupted_query_ids)
 
     def interrupt_processing_tasks(self) -> int:
         """服务重启时中断未完成的导入，保留任务以便用户从界面重试。"""

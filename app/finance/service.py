@@ -230,7 +230,18 @@ class FinanceService:
             session = self.create_session()
         result = QueryResult(session_id=session.session_id)
         if not self.repo.claim_session_query(session.session_id, result.query_id):
-            raise RuntimeError("该会话已有查询正在处理，请等待完成后再提问")
+            # GET /queries/{query_id} 在后台任务保存终态后，finally 释放会话占用前
+            # 存在一个很短的竞态窗口。终态查询不会再占用会话，提交下一轮时先
+            # 回收这类陈旧占用，避免正常的多轮追问收到误报 409。
+            current_session = self.repo.get_session(session.session_id)
+            active_query_id = getattr(current_session, "active_query_id", None) if current_session else None
+            active_query = self.repo.get_query(active_query_id) if active_query_id else None
+            if active_query and active_query.status in {"completed", "failed", "clarification_needed"}:
+                self.repo.release_session_query(session.session_id, active_query_id)
+                if not self.repo.claim_session_query(session.session_id, result.query_id):
+                    raise RuntimeError("该会话已有查询正在处理，请等待完成后再提问")
+            else:
+                raise RuntimeError("该会话已有查询正在处理，请等待完成后再提问")
         try:
             self.repo.save_query(result)
             self.repo.save_message(Message(session_id=session.session_id, role="user", content=query))
@@ -356,6 +367,28 @@ class FinanceService:
         time_scope = data.get("time_scope") or None
         needs_clarification = bool(data.get("needs_clarification"))
         clarification_question = str(data.get("clarification_question") or "")
+        rewritten_query = str(data.get("rewritten_query") or query)
+        # 对“现金流为什么变化”“同期营业收入呢”这类指标追问，
+        # 若当前轮没有新对象，则从最近一条用户问题继承唯一实体和报告期。
+        # 普通概念问题不触发，避免把新话题错误绑定到旧会话对象。
+        followup_signal = re.search(r"现金流|同期|同比|变化|增长|利润|收入|营收|净额|为什么|多少|呢|它|该|这", query)
+        if not mentioned_names and not mentioned_codes and not target_title and followup_signal:
+            previous_user = next((item.content for item in reversed(prior) if item.role == "user"), "")
+            try:
+                previous_entities = self.repo.find_entities_in_text(previous_user) if previous_user else []
+            except Exception:
+                previous_entities = []
+            if isinstance(previous_entities, list) and len(previous_entities) == 1:
+                previous_entity = previous_entities[0]
+                previous_name = str(getattr(previous_entity, "name", "")).strip()
+                if previous_name:
+                    mentioned_names = [previous_name]
+                    period_match = re.search(r"20\d{2}\s*年\s*(?:第)?[一二三四]季度|20\d{2}\s*Q[1-4]", previous_user, re.IGNORECASE)
+                    if not time_scope and period_match:
+                        time_scope = period_match.group(0)
+                    if getattr(previous_entity, "entity_type", None) in {"company", "institution"}:
+                        filter_value = DocumentType.COMPANY_REPORT.value
+                    rewritten_query = " ".join(part for part in (previous_name, time_scope or "", query) if part)
         # 宏观指标带有明确月份时，可用政策资料类型和时间范围消歧，避免把唯一可匹配报告误判为必须追问。
         if needs_clarification and not mentioned_codes and (
             re.search(r"社会融资规模|M2|货币政策|货币供应量", query, re.IGNORECASE)
@@ -406,7 +439,7 @@ class FinanceService:
             clarification_question = clarification_question or "请提供要总结的资料名称或产品代码。"
         return QuestionUnderstanding(
             question_type=question_type,
-            rewritten_query=str(data.get("rewritten_query") or query),
+            rewritten_query=rewritten_query,
             mentioned_codes=mentioned_codes,
             mentioned_names=mentioned_names,
             document_type_filter=filter_value if filter_value in {item.value for item in DocumentType} else None,
@@ -415,6 +448,17 @@ class FinanceService:
             needs_clarification=needs_clarification,
             clarification_question=clarification_question,
         )
+
+    @staticmethod
+    def _company_report_metric_terms(query: str) -> list[str]:
+        """返回公司报告中需要优先补全的表格字段关键词。"""
+        aliases = (
+            (r"营收|营业收入", "营业收入"),
+            (r"归母净利润|归属于本行股东的净利润|归属于上市公司股东的净利润|净利润", "净利润"),
+            (r"经营活动.*现金流|现金流量净额|现金流", "经营活动产生的现金流量净额"),
+            (r"审计|审阅", "未经审计"),
+        )
+        return list(dict.fromkeys(term for pattern, term in aliases if re.search(pattern, query)))
 
     def search(self, query: str, limit: int = 8, understanding: QuestionUnderstanding | None = None) -> list[Evidence]:
         client = self._client()
@@ -497,6 +541,20 @@ class FinanceService:
                                    locator=SourceLocator(page=entity.get("page"), section=entity.get("section"), block_index=entity.get("block_index"), excerpt=entity["content"][:240]),
                                    score=float(hit.get("distance", 0))))
         result = self._neighbor_context(client, result)
+        metric_terms = self._company_report_metric_terms(query)
+        company_scope = bool(
+            understanding
+            and understanding.document_type_filter == DocumentType.COMPANY_REPORT
+            and document_ids
+        )
+        if metric_terms and company_scope:
+            # 混合向量检索有时会把“营业收入”召回到现金流量表；
+            # 对已锁定的公司报告活动版本补读结构化切片，优先保留包含目标字段的表格。
+            all_evidence = self._all_document_evidence(client, active_pairs)
+            exact_evidence = [item for item in all_evidence if any(term in item.content for term in metric_terms)]
+            if exact_evidence:
+                seen = {self._evidence_key(item) for item in exact_evidence}
+                result = exact_evidence[:limit] + [item for item in result if self._evidence_key(item) not in seen]
         if result:
             from app.lm.reranker_utils import get_reranker_model
             scores = get_reranker_model().compute_score([(search_text, item.content) for item in result])

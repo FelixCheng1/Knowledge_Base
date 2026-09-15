@@ -455,12 +455,14 @@ function Chat({ documents, sessions, onRefresh }: { documents: Document[]; sessi
     </main>
     <aside className="sources-panel">
       <Card className="sources-card" variant="borderless" title={<div><div className="eyebrow">EVIDENCE RAIL</div><Title level={4}>回答依据</Title></div>} extra={citations.length ? <Badge count={citations.length} overflowCount={99} /> : null}>
-        {citations.length ? <List className="source-list" dataSource={citations} renderItem={(citation, index) => <List.Item className="source-item">
-          <div className="source-title-row"><span className="source-index">{index + 1}</span><Text strong ellipsis={{ tooltip: citation.title }}>{citation.title}</Text></div>
-          <Text type="secondary" className="source-location">{citation.locator.page ? `第 ${citation.locator.page} 页` : citation.locator.section || '资料正文'} · 版本 {citation.version_id.slice(0, 8)}</Text>
-          <Paragraph className="source-excerpt" ellipsis={{ rows: 3 }}>{citation.locator.excerpt || '暂无摘录'}</Paragraph>
-          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openCitation(citation)}>打开原文</Button>
-        </List.Item>} /> : <div className="sources-empty"><FileSearchOutlined /><Text type="secondary">完成一次提问后，这里会列出可核对的文件、版本和页码。</Text></div>}
+        <div className="sources-scroll">
+          {citations.length ? <List className="source-list" dataSource={citations} renderItem={(citation, index) => <List.Item className="source-item">
+            <div className="source-title-row"><span className="source-index">{index + 1}</span><Text strong ellipsis={{ tooltip: citation.title }}>{citation.title}</Text></div>
+            <Text type="secondary" className="source-location">{citation.locator.page ? `第 ${citation.locator.page} 页` : citation.locator.section || '资料正文'} · 版本 {citation.version_id.slice(0, 8)}</Text>
+            <Paragraph className="source-excerpt" ellipsis={{ rows: 3 }}>{citation.locator.excerpt || '暂无摘录'}</Paragraph>
+            <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openCitation(citation)}>打开原文</Button>
+          </List.Item>} /> : <div className="sources-empty"><FileSearchOutlined /><Text type="secondary">完成一次提问后，这里会列出可核对的文件、版本和页码。</Text></div>}
+        </div>
       </Card>
       <Card className="source-note" variant="borderless"><Space align="start"><SafetyCertificateOutlined className="note-icon" /><div><Text strong>回答边界</Text><Paragraph type="secondary">资料没有明确说明时会直接标注不足，不提供个性化买卖建议。</Paragraph></div></Space></Card>
     </aside>

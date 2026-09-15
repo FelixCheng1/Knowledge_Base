@@ -70,6 +70,31 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertEqual(result.target_document_title, "中国货币政策执行报告")
         self.assertEqual(result.time_scope, "2026Q1")
 
+    def test_metric_followup_inherits_unique_company_and_report_period(self) -> None:
+        llm_module = types.ModuleType("app.lm.lm_utils")
+        llm = Mock()
+        llm.invoke.return_value = types.SimpleNamespace(content=json.dumps({
+            "question_type": "fact", "rewritten_query": "经营活动现金流为什么变化这么大？",
+            "mentioned_codes": [], "mentioned_names": [], "document_type_filter": None,
+            "target_document_title": None, "time_scope": None,
+            "needs_clarification": False, "clarification_question": "",
+        }, ensure_ascii=False))
+        llm_module.get_llm_client = Mock(return_value=llm)
+        self.repo.find_entities_in_text.return_value = [types.SimpleNamespace(
+            entity_id="company-maotai", name="贵州茅台", entity_type="company",
+        )]
+        history = [
+            Message(session_id="s1", role="user", content="贵州茅台2026年一季度营收增长了吗?"),
+            Message(session_id="s1", role="user", content="经营活动现金流为什么变化这么大？"),
+        ]
+        with patch.dict(sys.modules, {"app.lm.lm_utils": llm_module}):
+            result = self.service._understand_query("经营活动现金流为什么变化这么大？", history)
+        self.assertEqual(result.mentioned_names, ["贵州茅台"])
+        self.assertEqual(result.document_type_filter, DocumentType.COMPANY_REPORT)
+        self.assertEqual(result.time_scope, "2026年一季度")
+        self.assertIn("贵州茅台", result.rewritten_query)
+        self.repo.find_entities_in_text.assert_called_once_with("贵州茅台2026年一季度营收增长了吗?")
+
     def test_company_report_with_one_active_version_suppresses_unnecessary_clarification(self) -> None:
         llm_module = types.ModuleType("app.lm.lm_utils")
         llm = Mock()
@@ -101,6 +126,13 @@ class FinanceServiceRegressionTest(unittest.TestCase):
             filter='document_id == "doc-1" and version_id == "v1" and block_index in [2, 4]',
             output_fields=["id", "document_id", "version_id", "content", "title", "document_type", "page", "section", "block_index"],
         )
+
+    def test_company_report_metric_terms_expand_common_financial_aliases(self) -> None:
+        self.assertEqual(
+            FinanceService._company_report_metric_terms("营业收入和归母净利润同比如何，现金流为什么变化？"),
+            ["营业收入", "净利润", "经营活动产生的现金流量净额"],
+        )
+        self.assertEqual(FinanceService._company_report_metric_terms("这份一季报经过审计了吗？"), ["未经审计"])
 
     def test_search_expression_contains_only_active_document_versions(self) -> None:
         self.repo.documents_for_entity_ids.return_value = []
@@ -167,6 +199,17 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.repo.interrupt_processing_tasks.return_value = 2
         self.assertEqual(self.service.recover_interrupted_imports(), 2)
         self.repo.interrupt_processing_tasks.assert_called_once_with()
+
+    def test_submit_query_reclaims_terminal_query_before_next_turn(self) -> None:
+        session = types.SimpleNamespace(session_id="s1", active_query_id="old-query")
+        self.repo.get_session.return_value = session
+        self.repo.claim_session_query.side_effect = [False, True]
+        self.repo.get_query.return_value = types.SimpleNamespace(status="completed")
+        result = self.service.submit_query("第二轮追问", "s1")
+        self.assertEqual(result.session_id, "s1")
+        self.repo.release_session_query.assert_called_once_with("s1", "old-query")
+        self.assertEqual(self.repo.claim_session_query.call_count, 2)
+        self.repo.save_query.assert_called_once_with(result)
     def test_search_uses_entities_found_in_query_text(self) -> None:
         self.repo.find_entities.return_value = []
         self.repo.find_entities_in_text.return_value = [types.SimpleNamespace(entity_id="entity-short")]

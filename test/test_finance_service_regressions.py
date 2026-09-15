@@ -150,6 +150,13 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertEqual(result, [])
         self.repo.active_version_pairs.assert_not_called()
 
+    def test_historical_product_status_does_not_claim_current_availability(self) -> None:
+        evidence = [self._evidence("募集期为2013年4月7日至4月11日，成立后不开放申购和赎回。", block=1, version="v1")]
+        answer, citations = self.service._answer("建设银行利得盈2013年第17期现在还能购买吗？", evidence)
+        self.assertIn("无法确认现在的实时购买", answer)
+        self.assertIn("以销售机构当前公告或产品页面为准", answer)
+        self.assertEqual(len(citations), 1)
+
     def test_personalized_advice_is_refused_before_model_generation(self) -> None:
         evidence = [self._evidence("股票仓位为60%至95%，基金不保证盈利或最低收益。", block=1, version="v1")]
         answer, citations = self.service._answer("我风险承受能力一般，应该买入还是卖出这只基金？", evidence)

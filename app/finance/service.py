@@ -491,6 +491,19 @@ class FinanceService:
         return bool(re.search(r"买入|卖出|持有|赎回建议|推荐.*(基金|理财|产品)|适合我|买入金额|配置多少|保证本金|收益率最高", query))
 
     @staticmethod
+    def _is_current_product_status_query(query: str) -> bool:
+        """历史资料不能证明实时购买、申购、赎回状态。"""
+        return bool(re.search(r"(?:现在|当前|今天|目前|还能|是否).*(?:购买|申购|赎回|开放)|(?:购买|申购|赎回).*(?:吗|状态|是否)", query))
+
+    @staticmethod
+    def _current_status_answer(evidence: Evidence) -> str:
+        excerpt = re.sub(r"\s+", " ", evidence.content).strip()[:220]
+        return (
+            "当前知识库中的资料只能说明文件所载的产品条款或历史安排，无法确认现在的实时购买、申购或赎回状态。"
+            f"资料中可核对的历史信息是：{excerpt} [1]。请以销售机构当前公告或产品页面为准。"
+        )
+
+    @staticmethod
     def _is_prompt_injection(query: str) -> bool:
         """把用户问题中的改规则/编造来源要求作为边界输入处理。"""
         return bool(re.search(r"忽略(资料|所有规则|规则)|编一个|编造|收益保证.*来源|直接编", query))
@@ -514,6 +527,10 @@ class FinanceService:
             return self._boundary_answer("instruction", [], []), []
         if self._is_personalized_advice(query):
             return self._boundary_answer("advice", evidence, citations), citations
+        if self._is_current_product_status_query(query):
+            if evidence:
+                return self._current_status_answer(evidence[0]), citations[:1]
+            return "当前知识库没有可核对的实时销售状态，无法确认现在是否仍可购买、申购或赎回；请以销售机构当前公告或产品页面为准。", []
         if not evidence:
             return "当前知识库中未检索到足够信息，建议查看正式产品文件、公告原文或咨询相关工作人员。", []
         if understanding.question_type == "summary" or understanding.target_document_title:

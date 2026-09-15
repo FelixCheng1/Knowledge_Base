@@ -402,6 +402,24 @@ class FinanceServiceRegressionTest(unittest.TestCase):
             result = self.service.search("总结指定报告", understanding=understanding)
         self.assertEqual([item.content for item in result], ["完整章节"])
         self.assertIn('version_id == "v2"', client.query.call_args.kwargs["filter"])
+    def test_summary_covers_all_chunks_and_keeps_section_source_map(self) -> None:
+        llm_module = types.ModuleType("app.lm.lm_utils")
+        llm = Mock()
+        llm.invoke.side_effect = [
+            types.SimpleNamespace(content="第一批摘要"),
+            types.SimpleNamespace(content="第二批摘要"),
+            types.SimpleNamespace(content="综合摘要"),
+        ]
+        llm_module.get_llm_client = Mock(return_value=llm)
+        evidence = [self._evidence(f"章节内容-{index}", block=index, version="v1") for index in range(1, 8)]
+        with patch.dict(sys.modules, {"app.lm.lm_utils": llm_module}):
+            result = self.service._summarize("总结测试资料", evidence, QuestionUnderstanding(question_type="summary"))
+        self.assertIn("综合摘要", result)
+        self.assertIn("### 分章节依据", result)
+        for index in range(1, 8):
+            self.assertIn(f"[{index}]", result)
+        self.assertEqual(llm.invoke.call_count, 3)
+
     def test_metadata_fact_answer_includes_verified_publisher(self) -> None:
         document = FinancialDocument(
             document_id="doc-1", title="政策报告", active_version_id="v1",

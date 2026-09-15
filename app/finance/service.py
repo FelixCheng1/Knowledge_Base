@@ -770,28 +770,46 @@ class FinanceService:
             answer,
         )
     def _summarize(self, query: str, evidence: list[Evidence], understanding: QuestionUnderstanding) -> str:
-        """全文摘要：按章节分组、逐章汇总，再综合；每部分保留来源。"""
+        """全文摘要：按章节覆盖全部切片、分批汇总，再综合并保留来源索引。"""
         from app.lm.lm_utils import get_llm_client
         llm = get_llm_client()
-        by_section: dict[str, list[Evidence]] = {}
-        for item in evidence:
-            by_section.setdefault(item.locator.section or "未分章节", []).append(item)
+        by_section: dict[str, list[tuple[int, Evidence]]] = {}
+        for index, item in enumerate(evidence, 1):
+            by_section.setdefault(item.locator.section or "未分章节", []).append((index, item))
         section_notes: list[str] = []
+        # 每批保留来源编号，避免长章节被截成前几个切片；同一章节的后续批次仍会进入综合摘要。
+        batch_size = 6
         for section, items in by_section.items():
-            text = "\n".join(item.content for item in items[:6])
-            note = llm.invoke(
-                f"以下是一份金融资料的「{section}」章节内容。用不超过150字客观概括其要点，"
-                f"保留关键数字与单位，不添加资料外信息：\n\n{text}"
-            ).content.strip()
-            pages = sorted({item.locator.page for item in items if item.locator.page})
-            section_notes.append(f"### {section}（{'第' + str(pages[0]) + '页起' if pages else '未标注页码'}）\n{note}")
+            for batch_number, start in enumerate(range(0, len(items), batch_size), 1):
+                batch = items[start:start + batch_size]
+                source_text = "\n\n".join(f"[{index}] {item.content}" for index, item in batch)
+                note = llm.invoke(
+                    f"以下是一份金融资料的「{section}」章节第 {batch_number} 批内容。用不超过150字客观概括要点，"
+                    f"保留关键数字与单位，不添加资料外信息；不要删除或改写方括号中的来源编号：\n\n{source_text}"
+                ).content.strip()
+                pages = sorted({item.locator.page for _, item in batch if item.locator.page})
+                refs = " ".join(f"[{index}]" for index, _ in batch)
+                page_text = f"第{pages[0]}页起" if pages else "未标注页码"
+                suffix = f"（第 {batch_number} 批 · {page_text}）" if len(items) > batch_size else f"（{page_text}）"
+                section_notes.append(f"### {section}{suffix}\n{note}\n来源：{refs}")
         synthesis = llm.invoke(
-            "你将看到同一份金融资料各章节的要点概括。请综合成一篇 300-500 字的全文摘要，"
-            "按资料逻辑组织，不引入资料外结论，不提供投资建议；若章节间存在口径差异需指出：\n\n"
+            "你将看到同一份金融资料各章节的分批要点概括。请综合成一篇 300-500 字的全文摘要，"
+            "按资料逻辑组织，不引入资料外结论，不提供投资建议；若章节间存在口径差异需指出。"
+            "综合内容可以使用分节标题，但不要编造或删除来源编号：\n\n"
             + "\n\n".join(section_notes)
         ).content.strip()
         titles = "、".join(dict.fromkeys(item.title for item in evidence))
-        return f"以下为《{titles}》的摘要（依据资料原文整理，资料日期以文件标注为准）：\n\n{synthesis}"
+        source_lines: list[str] = []
+        for note in section_notes:
+            parts = note.rsplit("\n来源：", 1)
+            heading = parts[0].splitlines()[0]
+            refs = parts[1] if len(parts) == 2 else "未标注"
+            source_lines.append(f"- {heading}：{refs}")
+        source_map = "\n\n".join(source_lines)
+        return (
+            f"以下为《{titles}》的摘要（依据资料原文整理，资料日期以文件标注为准）：\n\n{synthesis}"
+            f"\n\n### 分章节依据\n{source_map}"
+        )
 
     def _client(self) -> MilvusClient:
         if self._milvus is None:

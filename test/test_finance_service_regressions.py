@@ -16,6 +16,21 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.repo = Mock()
         self.service = FinanceService(self.repo, Mock(), Path("output/finance"))
 
+    def test_summary_understanding_recovers_explicit_title_from_user_query(self) -> None:
+        llm_module = types.ModuleType("app.lm.lm_utils")
+        llm = Mock()
+        llm.invoke.return_value = types.SimpleNamespace(content=json.dumps({
+            "question_type": "summary", "rewritten_query": "总结中国货币政策执行报告",
+            "mentioned_codes": [], "mentioned_names": [], "document_type_filter": None,
+            "target_document_title": None, "time_scope": None,
+            "needs_clarification": True, "clarification_question": "请确认期次",
+        }, ensure_ascii=False))
+        llm_module.get_llm_client = Mock(return_value=llm)
+        with patch.dict(sys.modules, {"app.lm.lm_utils": llm_module}):
+            result = self.service._understand_query("总结中国货币政策执行报告的主要内容。", [])
+        self.assertEqual(result.target_document_title, "中国货币政策执行报告")
+        self.assertFalse(result.needs_clarification)
+
     def test_structured_understanding_accepts_valid_json(self) -> None:
         llm_module = types.ModuleType("app.lm.lm_utils")
         llm = Mock()
@@ -116,6 +131,16 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.repo.interrupt_processing_tasks.return_value = 2
         self.assertEqual(self.service.recover_interrupted_imports(), 2)
         self.repo.interrupt_processing_tasks.assert_called_once_with()
+    def test_search_uses_entities_found_in_query_text(self) -> None:
+        self.repo.find_entities.return_value = []
+        self.repo.find_entities_in_text.return_value = [types.SimpleNamespace(entity_id="entity-short")]
+        self.repo.documents_for_entity_ids.return_value = ["doc-1"]
+        self.repo.active_version_pairs.return_value = []
+        self.service._client = Mock(return_value=Mock())
+        understanding = QuestionUnderstanding(mentioned_names=["贵州茅台2026年一季度"])
+        self.assertEqual(self.service.search("贵州茅台2026年一季度营收增长了吗？", understanding=understanding), [])
+        self.repo.documents_for_entity_ids.assert_called_once_with(["entity-short"])
+
     def test_unknown_explicit_name_does_not_fall_back_to_global_search(self) -> None:
         self.repo.find_entities.return_value = []
         self.repo.documents_for_entity_ids.return_value = []
@@ -203,6 +228,26 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertEqual(task.stage, "内容已存在，等待重试")
         self.repo.save_document.assert_not_called()
 
+    def test_followup_inherits_summary_document_for_fact_question(self) -> None:
+        llm_module = types.ModuleType("app.lm.lm_utils")
+        llm = Mock()
+        llm.invoke.return_value = types.SimpleNamespace(content=json.dumps({
+            "question_type": "fact", "rewritten_query": "这份报告的报告期和发布日期是什么？",
+            "mentioned_codes": [], "mentioned_names": [], "document_type_filter": "policy",
+            "target_document_title": None, "time_scope": None,
+            "needs_clarification": True, "clarification_question": "请指定报告",
+        }, ensure_ascii=False))
+        llm_module.get_llm_client = Mock(return_value=llm)
+        history = [
+            Message(session_id="s1", role="user", content="总结中国货币政策执行报告的主要内容。"),
+            Message(session_id="s1", role="assistant", content="摘要内容"),
+            Message(session_id="s1", role="user", content="只说这份资料对应的报告期和发布日期。"),
+        ]
+        with patch.dict(sys.modules, {"app.lm.lm_utils": llm_module}):
+            result = self.service._understand_query("只说这份资料对应的报告期和发布日期。", history)
+        self.assertEqual(result.target_document_title, "中国货币政策执行报告")
+        self.assertFalse(result.needs_clarification)
+
     def test_invalid_understanding_for_pronoun_requests_clarification(self) -> None:
         llm_module = types.ModuleType("app.lm.lm_utils")
         llm = Mock()
@@ -214,6 +259,7 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertIn("补充", result.clarification_question)
 
     def test_summary_loads_all_selected_version_chunks_without_embeddings(self) -> None:
+        self.repo.find_entities.return_value = []
         self.repo.documents_for_entity_ids.return_value = []
         self.repo.documents_for_title.return_value = ["doc-1"]
         self.repo.active_version_pairs.return_value = [("doc-1", "v2")]
@@ -227,11 +273,19 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         milvus_module = types.ModuleType("app.clients.milvus_utils")
         milvus_module.create_hybrid_search_requests = Mock()
         milvus_module.hybrid_search = Mock()
-        understanding = QuestionUnderstanding(question_type="summary", target_document_title="指定报告")
+        understanding = QuestionUnderstanding(question_type="summary", target_document_title="指定报告", mentioned_names=["指定报告"])
         with patch.dict(sys.modules, {"app.clients.milvus_utils": milvus_module}):
             result = self.service.search("总结指定报告", understanding=understanding)
         self.assertEqual([item.content for item in result], ["完整章节"])
         self.assertIn('version_id == "v2"', client.query.call_args.kwargs["filter"])
+    def test_metadata_fact_answer_extracts_period_and_publish_date_from_evidence(self) -> None:
+        evidence = [
+            self._evidence("中国货币政策执行报告\n2026年第一季度\n2026 年 5 月 11 日", block=1, version="v1"),
+        ]
+        citations = [types.SimpleNamespace()]
+        answer = self.service._metadata_fact_answer("这份报告的报告期和发布日期是什么？", evidence, citations)
+        self.assertEqual(answer, "报告期：2026年第一季度 [1]。\n\n发布日期：2026年5月11日 [1]。")
+
     def test_split_enforces_milvus_content_limit(self) -> None:
         chunks = self.service._split("甲" * 2500)
         self.assertEqual([len(chunk) for chunk in chunks], [900, 900, 700])

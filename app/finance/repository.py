@@ -73,6 +73,21 @@ class FinanceRepository:
         escaped = {"$regex": re.escape(term), "$options": "i"}
         return [FinancialEntity.model_validate(self._clean(x)) for x in self.entities.find({"$or": [{"name": escaped}, {"code": escaped}, {"aliases": escaped}]})]
 
+    def find_entities_in_text(self, text: str) -> list[FinancialEntity]:
+        """Find entities whose names or safe company short forms occur in a query."""
+        normalized = re.sub(r"\s+", "", text).lower()
+        found: list[FinancialEntity] = []
+        for raw in self.entities.find({}):
+            entity = FinancialEntity.model_validate(self._clean(raw))
+            terms = [entity.name, *entity.aliases]
+            if entity.entity_type in {"company", "institution"}:
+                terms.extend(re.sub(r"(股份有限公司|有限责任公司|有限公司|公司)$", "", entity.name).split())
+                if entity.name.endswith("酒股份有限公司"):
+                    terms.append(entity.name.removesuffix("酒股份有限公司"))
+            if any(len(term.strip()) >= 2 and re.sub(r"\s+", "", term).lower() in normalized for term in terms if term):
+                found.append(entity)
+        return found
+
     def documents_for_entity_ids(self, entity_ids: list[str]) -> list[str]:
         if not entity_ids:
             return []

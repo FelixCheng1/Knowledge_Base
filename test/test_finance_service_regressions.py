@@ -70,6 +70,25 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertEqual(result.target_document_title, "中国货币政策执行报告")
         self.assertEqual(result.time_scope, "2026Q1")
 
+    def test_company_report_with_one_active_version_suppresses_unnecessary_clarification(self) -> None:
+        llm_module = types.ModuleType("app.lm.lm_utils")
+        llm = Mock()
+        llm.invoke.return_value = types.SimpleNamespace(content=json.dumps({
+            "question_type": "fact", "rewritten_query": "平安银行这份一季报经过审计了吗？",
+            "mentioned_codes": [], "mentioned_names": ["平安银行", "一季报"],
+            "document_type_filter": "company_report", "target_document_title": None, "time_scope": None,
+            "needs_clarification": True, "clarification_question": "请补充年份",
+        }, ensure_ascii=False))
+        llm_module.get_llm_client = Mock(return_value=llm)
+        self.repo.find_entities_in_text.return_value = [types.SimpleNamespace(entity_id="company-ping-an")]
+        self.repo.documents_for_entity_ids.return_value = ["doc-ping-an"]
+        self.repo.active_version_pairs.return_value = [("doc-ping-an", "version-q1")]
+        with patch.dict(sys.modules, {"app.lm.lm_utils": llm_module}):
+            result = self.service._understand_query("平安银行这份一季报经过审计了吗？", [])
+        self.assertFalse(result.needs_clarification)
+        self.assertEqual(result.document_type_filter, DocumentType.COMPANY_REPORT)
+        self.repo.active_version_pairs.assert_called_once_with(["doc-ping-an"], None, "company_report")
+
     def test_neighbor_context_keeps_chunks_from_same_block_and_version(self) -> None:
         first = self._evidence("part-a", block=3, version="v1")
         second = self._evidence("part-b", block=3, version="v1")

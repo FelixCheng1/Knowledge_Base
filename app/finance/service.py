@@ -364,6 +364,28 @@ class FinanceService:
             filter_value = DocumentType.POLICY.value
             needs_clarification = False
             clarification_question = ""
+        # 公司报告问题若已明确公司和报告类型，可用活动版本数量判断是否需要年份澄清。
+        # 只有唯一活动报告时自动消歧；同一公司存在多个活动报告则保留模型追问。
+        report_marker = re.search(r"一季报|二季报|三季报|四季报|季度报告|半年报|年度报告|年报", query)
+        company_names = [
+            name for name in mentioned_names
+            if not re.search(r"一季报|二季报|三季报|四季报|季度报告|半年报|年度报告|年报", name)
+        ]
+        if needs_clarification and report_marker and company_names:
+            try:
+                matched_entities = self.repo.find_entities_in_text(query)
+                entity_ids = [item.entity_id for item in matched_entities if getattr(item, "entity_id", None)] if isinstance(matched_entities, list) else []
+                document_ids = self.repo.documents_for_entity_ids(entity_ids) if entity_ids else []
+                active_pairs = self.repo.active_version_pairs(
+                    document_ids or None, time_scope, DocumentType.COMPANY_REPORT.value,
+                )
+                active_document_ids = {document_id for document_id, _ in active_pairs}
+            except Exception:
+                active_document_ids = set()
+            if len(active_document_ids) == 1:
+                filter_value = DocumentType.COMPANY_REPORT.value
+                needs_clarification = False
+                clarification_question = ""
         if not target_title and question_type != "summary" and re.search(r"这份资料|这份报告|该报告|该资料", query):
             for item in reversed(prior):
                 if item.role != "user":

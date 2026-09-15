@@ -441,12 +441,37 @@ class FinanceService:
     def _evidence_key(item: Evidence) -> tuple[str, str, int | None, str]:
         return (item.document_id, item.version_id, item.locator.block_index, hashlib.sha1(item.content.encode("utf-8")).hexdigest())
 
+    @staticmethod
+    def _is_personalized_advice(query: str) -> bool:
+        """识别首期明确禁止的买卖、推荐、收益承诺和金额建议。"""
+        return bool(re.search(r"买入|卖出|持有|赎回建议|推荐.*(基金|理财|产品)|适合我|买入金额|配置多少|保证本金|收益率最高", query))
+
+    @staticmethod
+    def _is_prompt_injection(query: str) -> bool:
+        """把用户问题中的改规则/编造来源要求作为边界输入处理。"""
+        return bool(re.search(r"忽略(资料|所有规则|规则)|编一个|编造|收益保证.*来源|直接编", query))
+
+    @staticmethod
+    def _boundary_answer(kind: str, evidence: list[Evidence], citations: list[Citation]) -> str:
+        if kind == "advice":
+            answer = "我不能根据个人情况提供买入、卖出、持有、赎回、产品推荐或金额配置建议。"
+            if evidence:
+                excerpt = re.sub(r"\s+", " ", evidence[0].content).strip()[:180]
+                answer += f"我可以依据资料说明客观条款和风险，例如：{excerpt} [1]。"
+            answer += "金融产品有风险，正式信息以产品文件和公告原文为准。"
+            return answer
+        return "我不能忽略资料边界、编造金融产品、收益承诺或来源链接；如需查询，请提出知识库内资料能够核对的具体问题。"
+
     def _answer(self, query: str, evidence: list[Evidence], understanding: QuestionUnderstanding | None = None,
                 query_id: str | None = None) -> tuple[str, list[Citation]]:
-        if not evidence:
-            return "当前知识库中未检索到足够信息，建议查看正式产品文件、公告原文或咨询相关工作人员。", []
         understanding = understanding or QuestionUnderstanding(rewritten_query=query)
         citations = [Citation(document_id=e.document_id, version_id=e.version_id, title=e.title, locator=e.locator) for e in evidence]
+        if self._is_prompt_injection(query):
+            return self._boundary_answer("instruction", [], []), []
+        if self._is_personalized_advice(query):
+            return self._boundary_answer("advice", evidence, citations), citations
+        if not evidence:
+            return "当前知识库中未检索到足够信息，建议查看正式产品文件、公告原文或咨询相关工作人员。", []
         if understanding.question_type == "summary" or understanding.target_document_title:
             return self._summarize(query, evidence, understanding), citations
         context = "\n\n".join(f"[{i + 1}] {e.title}（第{e.locator.page or '未标注'}页）\n{e.content}" for i, e in enumerate(evidence))

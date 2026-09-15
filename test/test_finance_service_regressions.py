@@ -9,12 +9,29 @@ from unittest.mock import Mock, patch
 
 from app.finance.models import DocumentType, DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator
 from app.finance.service import FinanceService
+from app.finance.repository import FinanceRepository
 
 
 class FinanceServiceRegressionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.repo = Mock()
         self.service = FinanceService(self.repo, Mock(), Path("output/finance"))
+
+    def test_understanding_normalizes_macro_and_company_report_aliases(self) -> None:
+        llm_module = types.ModuleType("app.lm.lm_utils")
+        llm = Mock()
+        llm.invoke.return_value = types.SimpleNamespace(content=json.dumps({
+            "question_type": "fact", "rewritten_query": "原问题",
+            "mentioned_codes": [], "mentioned_names": ["货币政策执行报告"],
+            "document_type_filter": "policy", "target_document_title": None, "time_scope": None,
+            "needs_clarification": True, "clarification_question": "请指定期次",
+        }, ensure_ascii=False))
+        llm_module.get_llm_client = Mock(return_value=llm)
+        with patch.dict(sys.modules, {"app.lm.lm_utils": llm_module}):
+            result = self.service._understand_query("这份货币政策执行报告的政策取向是什么？", [])
+        self.assertFalse(result.needs_clarification)
+        self.assertEqual(result.document_type_filter, DocumentType.POLICY)
+        self.assertIn("货币政策执行报告", result.mentioned_names[0])
 
     def test_summary_understanding_recovers_explicit_title_from_user_query(self) -> None:
         llm_module = types.ModuleType("app.lm.lm_utils")
@@ -140,6 +157,33 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         understanding = QuestionUnderstanding(mentioned_names=["贵州茅台2026年一季度"])
         self.assertEqual(self.service.search("贵州茅台2026年一季度营收增长了吗？", understanding=understanding), [])
         self.repo.documents_for_entity_ids.assert_called_once_with(["entity-short"])
+
+    def test_month_end_scope_matches_corresponding_quarter_report(self) -> None:
+        self.assertTrue(FinanceRepository._version_matches_time({"report_period": "2026年第一季度"}, "2026年3月末"))
+        self.assertFalse(FinanceRepository._version_matches_time({"report_period": "2025年度"}, "2026年3月末"))
+
+    def test_concept_query_with_unmatched_education_name_keeps_global_type_scope(self) -> None:
+        self.repo.find_entities.return_value = []
+        self.repo.find_entities_in_text.return_value = []
+        self.repo.documents_for_entity_ids.return_value = []
+        self.repo.active_version_pairs.return_value = []
+        self.service._client = Mock(return_value=Mock())
+        understanding = QuestionUnderstanding(
+            question_type="concept", mentioned_names=["教育手册"], document_type_filter=DocumentType.EDUCATION,
+        )
+        self.assertEqual(self.service.search("基金投资者有哪些基本权利？", understanding=understanding), [])
+        self.repo.active_version_pairs.assert_called_once_with(None, None, "education_or_faq")
+
+    def test_explicit_document_title_can_scope_fact_search_without_entity(self) -> None:
+        self.repo.find_entities.return_value = []
+        self.repo.documents_for_entity_ids.return_value = []
+        self.repo.documents_for_title.return_value = ["doc-policy"]
+        self.repo.active_version_pairs.return_value = []
+        self.service._client = Mock(return_value=Mock())
+        understanding = QuestionUnderstanding(mentioned_names=["中国货币政策执行报告"], document_type_filter=DocumentType.POLICY)
+        self.assertEqual(self.service.search("中国货币政策执行报告的报告期是什么？", understanding=understanding), [])
+        self.repo.documents_for_title.assert_called_once_with("中国货币政策执行报告")
+        self.repo.active_version_pairs.assert_called_once_with(["doc-policy"], None, "policy")
 
     def test_unknown_explicit_name_does_not_fall_back_to_global_search(self) -> None:
         self.repo.find_entities.return_value = []
@@ -278,6 +322,17 @@ class FinanceServiceRegressionTest(unittest.TestCase):
             result = self.service.search("总结指定报告", understanding=understanding)
         self.assertEqual([item.content for item in result], ["完整章节"])
         self.assertIn('version_id == "v2"', client.query.call_args.kwargs["filter"])
+    def test_metadata_fact_answer_includes_verified_publisher(self) -> None:
+        document = FinancialDocument(
+            document_id="doc-1", title="政策报告", active_version_id="v1",
+            versions=[DocumentVersion(version_id="v1", original_name="报告.pdf", stored_path="报告.pdf", checksum="x")],
+            metadata={"subject_name": "中国人民银行货币政策分析小组"},
+        )
+        self.repo.get_document.return_value = document
+        evidence = [self._evidence("中国人民银行货币政策分析小组", block=1, version="v1")]
+        answer = self.service._metadata_fact_answer("这份资料由谁发布？", evidence, [types.SimpleNamespace()])
+        self.assertEqual(answer, "发布主体：中国人民银行货币政策分析小组 [1]。")
+
     def test_metadata_fact_answer_extracts_period_and_publish_date_from_evidence(self) -> None:
         evidence = [
             self._evidence("中国货币政策执行报告\n2026年第一季度\n2026 年 5 月 11 日", block=1, version="v1"),

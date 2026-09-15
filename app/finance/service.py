@@ -339,13 +339,30 @@ class FinanceService:
         question_type = data.get("question_type") if data.get("question_type") in {"fact", "concept", "summary"} else "fact"
         mentioned_names = [str(item) for item in (data.get("mentioned_names") or []) if str(item).strip()]
         mentioned_codes = [str(item) for item in (data.get("mentioned_codes") or [])]
+        # 这些是资料类别或稳定报告简称，不能因为模型没有给出完整标题而触发无谓澄清。
+        if re.search(r"上市公司年报", query):
+            filter_value = DocumentType.COMPANY_REPORT.value
+            mentioned_names = []
+        elif "货币政策执行报告" in query:
+            filter_value = DocumentType.POLICY.value
+            if not any("货币政策执行报告" in name for name in mentioned_names):
+                mentioned_names.append("中国货币政策执行报告")
         target_title = data.get("target_document_title") or (mentioned_names[0] if question_type == "summary" and mentioned_names else None)
         if question_type == "summary" and not target_title:
             title_match = re.search(r"(?:总结|概括|介绍)(.+?)(?:的(?:主要内容|内容|摘要)|[。！？?]|$)", query)
             if title_match and title_match.group(1).strip():
                 target_title = title_match.group(1).strip(" ：:，, ")
+        time_scope = data.get("time_scope") or None
         needs_clarification = bool(data.get("needs_clarification"))
         clarification_question = str(data.get("clarification_question") or "")
+        # 宏观指标带有明确月份时，可用政策资料类型和时间范围消歧，避免把唯一可匹配报告误判为必须追问。
+        if needs_clarification and not mentioned_codes and (
+            re.search(r"社会融资规模|M2|货币政策|货币供应量", query, re.IGNORECASE)
+            or "货币政策执行报告" in query
+        ):
+            filter_value = DocumentType.POLICY.value
+            needs_clarification = False
+            clarification_question = ""
         if not target_title and question_type != "summary" and re.search(r"这份资料|这份报告|该报告|该资料", query):
             for item in reversed(prior):
                 if item.role != "user":
@@ -371,7 +388,7 @@ class FinanceService:
             mentioned_names=mentioned_names,
             document_type_filter=filter_value if filter_value in {item.value for item in DocumentType} else None,
             target_document_title=target_title,
-            time_scope=data.get("time_scope") or None,
+            time_scope=time_scope,
             needs_clarification=needs_clarification,
             clarification_question=clarification_question,
         )
@@ -395,10 +412,23 @@ class FinanceService:
                 entity_ids.extend(entity.entity_id for entity in text_matches)
         entity_ids = list(dict.fromkeys(entity_ids))
         document_ids = self.repo.documents_for_entity_ids(entity_ids)
+        if understanding and understanding.mentioned_names and not document_ids:
+            # 文档标题本身不是金融实体时，仍允许按明确标题锁定资料；没有标题命中则保持拒答，不能退化到全库。
+            for name in understanding.mentioned_names:
+                title_matches = self.repo.documents_for_title(name)
+                if isinstance(title_matches, list):
+                    document_ids.extend(title_matches)
+                if not title_matches:
+                    finder = getattr(self.repo, "find_documents_by_title_terms", None)
+                    if finder is not None:
+                        fuzzy_matches = finder(name)
+                        if isinstance(fuzzy_matches, list):
+                            document_ids.extend(fuzzy_matches)
+            document_ids = list(dict.fromkeys(document_ids))
         if exact_codes and not document_ids:
             # 用户明确给出代码但库中没有对应实体，不能退化到相似产品。
             return []
-        if understanding and understanding.mentioned_names and not document_ids and not understanding.target_document_title:
+        if understanding and understanding.mentioned_names and not document_ids and not understanding.target_document_title and understanding.question_type != "concept":
             # 用户明确提到对象但实体未识别，不能把相似资料当成该对象的答案；
             # 摘要问题已有明确文档标题时，允许继续走标题范围检索。
             return []
@@ -585,14 +615,16 @@ class FinanceService:
 
     def _metadata_fact_answer(self, query: str, evidence: list[Evidence], citations: list[Citation]) -> str | None:
         """优先使用人工核验元数据，再从对应正文证据中确定性提取事实。"""
-        wants_period = bool(re.search(r"报告期|所属期|期次", query))
-        wants_publish = bool(re.search(r"发布日期|发布日|发布时间|发布于", query))
-        if not (wants_period or wants_publish):
+        wants_period = bool(re.search(r"报告期|所属期|期次|哪个季度|哪一季度|哪年度|哪一年", query))
+        wants_publish = bool(re.search(r"发布日期|发布日|发布时间|发布于|发布时间", query))
+        wants_subject = bool(re.search(r"由谁发布|发布主体|发布机构|谁发布", query))
+        if not (wants_period or wants_publish or wants_subject):
             return None
         period_pattern = re.compile(r"(?<!\d)(20\d{2})\s*年\s*(第[一二三四]季度|上半年|下半年|年度)")
         date_pattern = re.compile(r"(?<!\d)(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
         period_value: tuple[str, int] | None = None
         publish_value: tuple[str, int] | None = None
+        subject_value: tuple[str, int] | None = None
         metadata_values: dict[str, str] = {}
         for item in evidence:
             try:
@@ -604,6 +636,7 @@ class FinanceService:
                 values = {
                     "report_period": (version.report_period if version else None) or document.metadata.get("report_period"),
                     "publish_date": (version.publish_date if version else None) or document.metadata.get("publish_date"),
+                    "subject_name": document.metadata.get("subject_name"),
                 }
                 for key, value in values.items():
                     if value and key not in metadata_values:
@@ -629,15 +662,21 @@ class FinanceService:
                             publish_value = (f"{date_match.group(1)}年{int(date_match.group(2))}月{int(date_match.group(3))}日", citation_number)
                 elif match and ("发布" in item.content or (item.locator.page == 1 and item.locator.block_index in {0, 1, 2, 3, 4})):
                     publish_value = (f"{match.group(1)}年{int(match.group(2))}月{int(match.group(3))}日", citation_number)
-            if (not wants_period or period_value) and (not wants_publish or publish_value):
+            if subject_value is None and wants_subject:
+                metadata_subject = metadata_values.get("subject_name")
+                if metadata_subject and (metadata_subject.replace(" ", "") in item.content.replace(" ", "") or item.locator.page == 1):
+                    subject_value = (metadata_subject, citation_number)
+            if (not wants_period or period_value) and (not wants_publish or publish_value) and (not wants_subject or subject_value):
                 break
-        if not period_value and not publish_value:
+        if not period_value and not publish_value and not subject_value:
             return None
         lines: list[str] = []
         if wants_period:
             lines.append(f"报告期：{period_value[0]} [{period_value[1]}]。" if period_value else "报告期：参考资料中未检索到明确的报告期。")
         if wants_publish:
             lines.append(f"发布日期：{publish_value[0]} [{publish_value[1]}]。" if publish_value else "发布日期：参考资料中未检索到明确的发布日期。")
+        if wants_subject:
+            lines.append(f"发布主体：{subject_value[0]} [{subject_value[1]}]。" if subject_value else "发布主体：参考资料中未检索到明确的发布主体。")
         return "\n\n".join(lines)
 
     @staticmethod

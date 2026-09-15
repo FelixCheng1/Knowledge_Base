@@ -27,6 +27,10 @@ def wait_result(base_url: str, query_id: str, timeout: float, interval: float = 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         response = requests.get(f"{base_url}/queries/{query_id}", timeout=20)
+        # POST /queries 先返回排队 ID，后台线程随后才持久化查询；短暂 404 属于可恢复竞态。
+        if response.status_code == 404:
+            time.sleep(min(interval, 0.5))
+            continue
         response.raise_for_status()
         result = response.json()
         if result.get("status") in TERMINAL:

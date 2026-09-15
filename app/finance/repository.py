@@ -129,6 +129,12 @@ class FinanceRepository:
         if quarter:
             markers = ("一", "二", "三", "四")
             return f"{markers[int(quarter.group(1)) - 1]}季度" in text or f"第{quarter.group(1)}季度" in text
+        month = re.search(r"(\d{1,2})月", scope)
+        if month and "季度" in text:
+            month_number = int(month.group(1))
+            quarter_number = (month_number - 1) // 3 + 1
+            markers = ("一", "二", "三", "四")
+            return f"{markers[quarter_number - 1]}季度" in text or f"第{quarter_number}季度" in text
         return "年度" in scope and "年度" in text
 
     def documents_for_title(self, term: str) -> list[str]:
@@ -137,6 +143,20 @@ class FinanceRepository:
             item["document_id"]
             for item in self.documents.find({"title": escaped, "status": DocumentStatus.ACTIVE.value}, {"document_id": 1})
         ]
+
+    def find_documents_by_title_terms(self, term: str) -> list[str]:
+        """按年份和中文标题词匹配简称，仍只返回 active 文档。"""
+        normalized_term = re.sub(r"\s+", "", term).lower()
+        tokens = re.findall(r"20\d{2}年|[\u4e00-\u9fff]{2,}", normalized_term)
+        tokens = [token for token in tokens if len(token) >= 2]
+        if not tokens:
+            return []
+        matches: list[str] = []
+        for item in self.documents.find({"status": DocumentStatus.ACTIVE.value}, {"document_id": 1, "title": 1}):
+            title = re.sub(r"\s+", "", str(item.get("title") or "")).lower()
+            if all(token in title for token in tokens):
+                matches.append(item["document_id"])
+        return matches
 
     def save_task(self, task: ImportTask) -> None:
         self.tasks.replace_one({"task_id": task.task_id}, self._dump(task), upsert=True)

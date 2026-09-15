@@ -319,12 +319,20 @@ class FinanceService:
         if exact_codes and not document_ids:
             # 用户明确给出代码但库中没有对应实体，不能退化到相似产品。
             return []
+        if understanding and understanding.mentioned_names and not document_ids:
+            # 用户明确提到对象但实体未识别，不能把相似资料当成该对象的答案。
+            return []
         if understanding and understanding.target_document_title:
             title_document_ids = self.repo.documents_for_title(understanding.target_document_title)
             if not title_document_ids:
                 return []
-            document_ids = [item for item in title_document_ids if not document_ids or item in document_ids]
-        active_pairs = self.repo.active_version_pairs(document_ids or None, understanding.time_scope if understanding else None)
+            if document_ids:
+                document_ids = [item for item in title_document_ids if item in document_ids]
+                if not document_ids:
+                    return []
+            else:
+                document_ids = title_document_ids
+        active_pairs = self.repo.active_version_pairs(document_ids if document_ids else None, understanding.time_scope if understanding else None)
         conditions: list[str] = []
         if exact_codes and not active_pairs:
             # 代码对应资料没有可用的活动版本（或不符合时间范围）。

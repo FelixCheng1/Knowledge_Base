@@ -76,6 +76,24 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.repo.interrupt_processing_tasks.return_value = 2
         self.assertEqual(self.service.recover_interrupted_imports(), 2)
         self.repo.interrupt_processing_tasks.assert_called_once_with()
+    def test_unknown_explicit_name_does_not_fall_back_to_global_search(self) -> None:
+        self.repo.find_entities.return_value = []
+        self.repo.documents_for_entity_ids.return_value = []
+        self.service._client = Mock(return_value=Mock())
+        understanding = QuestionUnderstanding(mentioned_names=['不存在的基金'])
+        result = self.service.search('不存在的基金赎回费', understanding=understanding)
+        self.assertEqual(result, [])
+        self.repo.active_version_pairs.assert_not_called()
+
+    def test_title_and_entity_scope_intersection_cannot_expand_to_global(self) -> None:
+        self.repo.find_entities.return_value = [types.SimpleNamespace(entity_id='entity-1')]
+        self.repo.documents_for_entity_ids.return_value = ['doc-1']
+        self.repo.documents_for_title.return_value = ['doc-2']
+        self.service._client = Mock(return_value=Mock())
+        understanding = QuestionUnderstanding(mentioned_names=['基金甲'], target_document_title='报告乙')
+        result = self.service.search('总结报告乙', understanding=understanding)
+        self.assertEqual(result, [])
+        self.repo.active_version_pairs.assert_not_called()
     def test_unknown_exact_code_does_not_fall_back_to_global_search(self) -> None:
         self.repo.find_entities.return_value = []
         self.repo.documents_for_entity_ids.return_value = []

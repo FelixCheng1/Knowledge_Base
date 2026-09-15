@@ -147,7 +147,7 @@ def original_file(document_id: str, version_id: str | None = Query(default=None,
         raise _not_found("资料文件")
     version = next((item for item in document.versions if item.version_id == selected_version_id), None)
     if version and Path(version.stored_path).exists():
-        return FileResponse(version.stored_path, filename=version.original_name)
+        return FileResponse(version.stored_path, filename=version.original_name, content_disposition_type="inline")
     try:
         url = service.original_file_url(document_id, version_id)
     except KeyError:

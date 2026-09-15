@@ -15,7 +15,6 @@ dependencies = [
     "langchain-openai>=1.1.11",
     "langgraph>=1.1.2",
     "loguru>=0.7.3",
-    "magic-pdf>=1.3.12",
     "minio>=7.2.20",
     "modelscope>=1.35.0",
     "numpy>=2.4.3",

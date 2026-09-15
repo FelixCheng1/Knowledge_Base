@@ -31,11 +31,13 @@ app.include_router(finance_router)
 
 
 @app.on_event("startup")
-def recover_interrupted_finance_queries() -> None:
-    """单进程重启后，明确标记未完成的旧查询，避免其永久停留在 processing。"""
+def recover_interrupted_finance_jobs() -> None:
+    """单进程重启后，明确标记未完成的查询和导入任务，避免永久停留在 processing。"""
     try:
         from app.finance.api import get_service
-        get_service().recover_interrupted_queries()
+        service = get_service()
+        service.recover_interrupted_queries()
+        service.recover_interrupted_imports()
     except Exception:
         # 服务可以在中间件启动前先提供 /health；错误由健康检查显示。
         pass

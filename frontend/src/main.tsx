@@ -110,7 +110,7 @@ const DOCUMENT_TYPES = [
   { value: 'education_or_faq', label: '投教与 FAQ' },
   { value: 'unknown', label: '待确认' },
 ]
-const TERMINAL_TASK_STATES = new Set(['active', 'failed', 'disabled'])
+const TERMINAL_TASK_STATES = new Set(['active', 'failed', 'disabled', 'interrupted'])
 
 function Documents({ documents, onRefresh }: { documents: Document[]; onRefresh: () => Promise<void> }) {
   const [uploading, setUploading] = useState(false)
@@ -202,7 +202,7 @@ function Documents({ documents, onRefresh }: { documents: Document[]; onRefresh:
     </Space>
     <List className="document-list" dataSource={visibleDocuments} locale={{ emptyText: '还没有符合条件的金融资料' }} renderItem={doc => {
       const task = Object.values(tasks).find(item => item.document_id === doc.document_id && !TERMINAL_TASK_STATES.has(item.status))
-      const failedTask = Object.values(tasks).find(item => item.document_id === doc.document_id && item.status === 'failed')
+      const failedTask = Object.values(tasks).find(item => item.document_id === doc.document_id && (item.status === 'failed' || item.status === 'interrupted'))
       const publishDate = typeof doc.metadata.publish_date === 'string' ? doc.metadata.publish_date : undefined
       return <List.Item actions={[
         <Button key="edit" type="link" onClick={() => openEdit(doc)}>修正元数据</Button>,

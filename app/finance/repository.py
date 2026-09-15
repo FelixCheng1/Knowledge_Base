@@ -168,7 +168,19 @@ class FinanceRepository:
         return self.queries.count_documents({"session_id": session_id, "status": "processing"}) > 0
 
     def interrupt_processing_queries(self) -> int:
+        query_ids = list(self.queries.find({"status": "processing"}, {"query_id": 1, "session_id": 1}))
         result = self.queries.update_many({"status": "processing"}, {"$set": {"status": "failed", "error": "服务重启导致查询中断", "updated_at": datetime.utcnow()}})
+        active_query_ids = [item["query_id"] for item in query_ids if item.get("query_id")]
+        if active_query_ids:
+            self.sessions.update_many({"active_query_id": {"$in": active_query_ids}}, {"$set": {"active_query_id": None}})
+        return result.modified_count
+
+    def interrupt_processing_tasks(self) -> int:
+        """服务重启时中断未完成的导入，保留任务以便用户从界面重试。"""
+        result = self.tasks.update_many(
+            {"status": DocumentStatus.PROCESSING.value},
+            {"$set": {"status": DocumentStatus.INTERRUPTED.value, "stage": "服务重启导致导入中断", "error": "服务重启导致导入中断", "updated_at": datetime.utcnow()}},
+        )
         return result.modified_count
 
     def readiness(self) -> bool:

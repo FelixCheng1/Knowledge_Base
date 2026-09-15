@@ -72,6 +72,10 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertIn('(document_id == "doc-2" and version_id == "v3")', expression)
         self.assertNotIn("version_id == \"v2\"", expression)
 
+    def test_import_recovery_delegates_to_repository(self) -> None:
+        self.repo.interrupt_processing_tasks.return_value = 2
+        self.assertEqual(self.service.recover_interrupted_imports(), 2)
+        self.repo.interrupt_processing_tasks.assert_called_once_with()
     def test_unknown_exact_code_does_not_fall_back_to_global_search(self) -> None:
         self.repo.find_entities.return_value = []
         self.repo.documents_for_entity_ids.return_value = []

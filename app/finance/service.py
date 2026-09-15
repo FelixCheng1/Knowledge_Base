@@ -188,6 +188,9 @@ class FinanceService:
     def recover_interrupted_queries(self) -> int:
         return self.repo.interrupt_processing_queries()
 
+    def recover_interrupted_imports(self) -> int:
+        return self.repo.interrupt_processing_tasks()
+
     def answer_query(self, query_id: str, query: str) -> QueryResult:
         """后台执行问答；流式模式通过 query_id 对应的 SSE 队列推送进度与增量。
 

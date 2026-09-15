@@ -131,15 +131,55 @@ class FinanceService:
             self._set_task(task, DocumentStatus.FAILED, "导入失败", str(exc))
 
     def update_document(self, document_id: str, title: str | None, document_type: str | None, metadata: dict | None) -> FinancialDocument:
-        changes = {k: v for k, v in {"title": title, "document_type": document_type, "metadata": metadata}.items() if v is not None}
+        """Apply human corrections and keep version/entity lookup fields in sync."""
+        current = self._must_document(document_id)
+        changes = {k: v for k, v in {"title": title, "document_type": document_type}.items() if v is not None}
         if document_type is not None:
             changes["document_type_override"] = document_type
         if metadata is not None:
-            changes["metadata_overrides"] = metadata
+            overrides = dict(current.metadata_overrides)
+            overrides.update(metadata)
+            merged = self._merge_metadata(current.metadata, metadata)
+            changes["metadata"] = merged
+            changes["metadata_overrides"] = overrides
         updated = self.repo.update_document(document_id, changes)
         if not updated:
             raise KeyError(document_id)
+        if metadata is not None:
+            self._sync_corrected_metadata(updated, metadata)
         return updated
+
+    def _sync_corrected_metadata(self, document: FinancialDocument, metadata: dict) -> None:
+        """Synchronize manual fields used by version filtering and entity lookup."""
+        active = next((version for version in document.versions if version.version_id == document.active_version_id), None)
+        for field in ("publish_date", "report_period", "effective_date"):
+            if field in metadata and active is not None:
+                setattr(active, field, metadata[field])
+        codes = [str(value) for value in (metadata.get("codes") or []) if str(value).strip()]
+        product_name = str(metadata.get("product_name") or "").strip()
+        share_class_name = str(metadata.get("share_class_name") or "").strip()
+        subject_name = str(metadata.get("subject_name") or "").strip()
+        for entity_id in document.entity_ids:
+            entity = self.repo.get_entity(entity_id)
+            if not entity:
+                continue
+            if entity.entity_type == "product":
+                if product_name:
+                    entity.name = product_name
+                if codes:
+                    entity.code = codes[0]
+            elif entity.entity_type == "share_class":
+                if share_class_name:
+                    entity.name = share_class_name
+                if len(codes) > 1:
+                    entity.code = codes[1]
+            elif entity.entity_type == "company":
+                if subject_name:
+                    entity.name = subject_name
+                if codes:
+                    entity.code = codes[0]
+            self.repo.save_entity(entity)
+        self.repo.save_document(document)
 
     def disable_document(self, document_id: str) -> FinancialDocument:
         document = self._must_document(document_id)
@@ -149,7 +189,6 @@ class FinanceService:
         assert updated
         return updated
 
-    @staticmethod
     @staticmethod
     def _merge_metadata(extracted: dict, overrides: dict) -> dict:
         merged = dict(extracted)
@@ -344,7 +383,11 @@ class FinanceService:
                     return []
             else:
                 document_ids = title_document_ids
-        active_pairs = self.repo.active_version_pairs(document_ids if document_ids else None, understanding.time_scope if understanding else None)
+        active_pairs = self.repo.active_version_pairs(
+            document_ids if document_ids else None,
+            understanding.time_scope if understanding else None,
+            understanding.document_type_filter.value if understanding and understanding.document_type_filter else None,
+        )
         conditions: list[str] = []
         if exact_codes and not active_pairs:
             # 代码对应资料没有可用的活动版本（或不符合时间范围）。
@@ -355,8 +398,6 @@ class FinanceService:
             f'(document_id == "{document_id}" and version_id == "{version_id}")'
             for document_id, version_id in active_pairs
         ) + ")")
-        if understanding and understanding.document_type_filter:
-            conditions.append(f'document_type == "{understanding.document_type_filter.value}"')
         if understanding and (understanding.question_type == "summary" or understanding.target_document_title):
             return self._all_document_evidence(client, active_pairs)
         from app.clients.milvus_utils import create_hybrid_search_requests, hybrid_search

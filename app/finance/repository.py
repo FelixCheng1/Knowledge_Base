@@ -65,6 +65,10 @@ class FinanceRepository:
     def save_entity(self, entity: FinancialEntity) -> None:
         self.entities.replace_one({"entity_id": entity.entity_id}, self._dump(entity), upsert=True)
 
+    def get_entity(self, entity_id: str) -> FinancialEntity | None:
+        raw = self._clean(self.entities.find_one({"entity_id": entity_id}))
+        return FinancialEntity.model_validate(raw) if raw else None
+
     def find_entities(self, term: str) -> list[FinancialEntity]:
         escaped = {"$regex": re.escape(term), "$options": "i"}
         return [FinancialEntity.model_validate(self._clean(x)) for x in self.entities.find({"$or": [{"name": escaped}, {"code": escaped}, {"aliases": escaped}]})]
@@ -74,12 +78,15 @@ class FinanceRepository:
             return []
         return [item["document_id"] for item in self.documents.find({"entity_ids": {"$in": entity_ids}, "status": DocumentStatus.ACTIVE.value}, {"document_id": 1})]
 
-    def active_version_pairs(self, document_ids: list[str] | None = None, time_scope: str | None = None) -> list[tuple[str, str]]:
-        """Return active document/version pairs, optionally constrained by a time scope."""
+    def active_version_pairs(self, document_ids: list[str] | None = None, time_scope: str | None = None,
+                             document_type: str | None = None) -> list[tuple[str, str]]:
+        """Return active document/version pairs with optional type and time filters."""
         query: dict[str, Any] = {
             "status": DocumentStatus.ACTIVE.value,
             "active_version_id": {"$type": "string", "$ne": ""},
         }
+        if document_type:
+            query["document_type"] = document_type
         if document_ids:
             query["document_id"] = {"$in": document_ids}
         pairs: list[tuple[str, str]] = []

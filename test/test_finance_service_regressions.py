@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app.finance.models import Evidence, FinancialDocument, Message, QuestionUnderstanding, SourceLocator
+from app.finance.models import DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator
 from app.finance.service import FinanceService
 
 
@@ -77,6 +77,27 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertEqual(merged['publish_date'], '人工核对日期')
         self.assertEqual(merged['report_period'], '2026年第一季度')
         self.assertEqual(merged['subject_name'], '人工主体')
+
+    def test_manual_metadata_correction_syncs_version_and_entity(self) -> None:
+        document = FinancialDocument(
+            document_id="doc-1", title="旧资料", active_version_id="version-1",
+            versions=[DocumentVersion(version_id="version-1", original_name="资料.pdf", stored_path="资料.pdf", checksum="x")],
+            entity_ids=["entity-1"], metadata={"publish_date": "自动日期"},
+        )
+        entity = FinancialEntity(entity_id="entity-1", name="旧产品", entity_type="product", code="000001")
+        self.repo.get_document.return_value = document
+        self.repo.update_document.return_value = document
+        self.repo.get_entity.return_value = entity
+        updated = self.service.update_document(
+            "doc-1", None, None,
+            {"publish_date": "2026-05-29", "product_name": "新产品", "codes": ["001001", "001003"]},
+        )
+        self.assertIs(updated, document)
+        self.assertEqual(document.versions[0].publish_date, "2026-05-29")
+        self.assertEqual(entity.name, "新产品")
+        self.assertEqual(entity.code, "001001")
+        self.repo.save_entity.assert_called_once_with(entity)
+        self.repo.save_document.assert_called_once_with(document)
 
     def test_import_recovery_delegates_to_repository(self) -> None:
         self.repo.interrupt_processing_tasks.return_value = 2

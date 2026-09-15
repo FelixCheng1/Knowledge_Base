@@ -98,7 +98,9 @@ class FinanceService:
             version.parse_path = str(markdown)
             version.parse_object_key = self._upload_to_object_storage(markdown, f"parsed/{document.document_id}/{version.version_id}/{markdown.name}")
             metadata, entities = self._extract_metadata(document.title, blocks)
-            document.document_type = metadata.pop("document_type")
+            extracted_type = metadata.pop("document_type")
+            document.document_type = document.document_type_override or extracted_type
+            metadata = self._merge_metadata(metadata, document.metadata_overrides)
             document.metadata = metadata
             version.publish_date = metadata.get("publish_date")
             version.report_period = metadata.get("report_period")
@@ -130,6 +132,10 @@ class FinanceService:
 
     def update_document(self, document_id: str, title: str | None, document_type: str | None, metadata: dict | None) -> FinancialDocument:
         changes = {k: v for k, v in {"title": title, "document_type": document_type, "metadata": metadata}.items() if v is not None}
+        if document_type is not None:
+            changes["document_type_override"] = document_type
+        if metadata is not None:
+            changes["metadata_overrides"] = metadata
         updated = self.repo.update_document(document_id, changes)
         if not updated:
             raise KeyError(document_id)
@@ -144,6 +150,12 @@ class FinanceService:
         return updated
 
     @staticmethod
+    @staticmethod
+    def _merge_metadata(extracted: dict, overrides: dict) -> dict:
+        merged = dict(extracted)
+        merged.update(overrides)
+        return merged
+
     def _safe_filename(upload_name: str) -> str:
         candidate = Path(upload_name.replace("\\", "/")).name
         if not candidate or candidate in {".", ".."}:

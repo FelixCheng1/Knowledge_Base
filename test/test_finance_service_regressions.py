@@ -72,6 +72,12 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertIn('(document_id == "doc-2" and version_id == "v3")', expression)
         self.assertNotIn("version_id == \"v2\"", expression)
 
+    def test_manual_metadata_overrides_survive_reextraction(self) -> None:
+        merged = self.service._merge_metadata({'publish_date': '自动日期', 'report_period': '2026年第一季度'}, {'publish_date': '人工核对日期', 'subject_name': '人工主体'})
+        self.assertEqual(merged['publish_date'], '人工核对日期')
+        self.assertEqual(merged['report_period'], '2026年第一季度')
+        self.assertEqual(merged['subject_name'], '人工主体')
+
     def test_import_recovery_delegates_to_repository(self) -> None:
         self.repo.interrupt_processing_tasks.return_value = 2
         self.assertEqual(self.service.recover_interrupted_imports(), 2)

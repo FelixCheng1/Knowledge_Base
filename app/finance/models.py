@@ -71,6 +71,8 @@ class FinancialDocument(BaseModel):
     document_id: str = Field(default_factory=new_id)
     title: str
     document_type: DocumentType = DocumentType.UNKNOWN
+    document_type_override: DocumentType | None = None
+    metadata_overrides: dict[str, Any] = Field(default_factory=dict)
     status: DocumentStatus = DocumentStatus.PENDING
     active_version_id: str | None = None
     versions: list[DocumentVersion] = Field(default_factory=list)

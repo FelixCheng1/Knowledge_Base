@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app.finance.models import DocumentType, DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator
+from app.finance.models import DocumentType, DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator, session_title_from_query
 from app.finance.service import FinanceService
 from app.finance.repository import FinanceRepository
 
@@ -257,6 +257,12 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.service.submit_query("问题", "session-1")
         self.repo.save_query.assert_not_called()
+
+    def test_session_title_from_query_is_compact_and_distinguishable(self) -> None:
+        self.assertEqual(session_title_from_query("  华夏债券 C 的赎回费如何计算？  "), "华夏债券 C 的赎回费如何计算？")
+        title = session_title_from_query("这是一个很长很长的问题，用来验证侧边栏标题会被压缩并保留辨识度，同时保留最初的问题主题。")
+        self.assertTrue(title.endswith("…"))
+        self.assertLessEqual(len(title), 37)
 
     def test_duplicate_import_reuses_failed_version_as_pending_retry(self) -> None:
         from app.finance.models import DocumentStatus, DocumentVersion

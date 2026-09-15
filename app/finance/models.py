@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
@@ -14,6 +15,16 @@ def new_id() -> str:
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def session_title_from_query(query: str, max_chars: int = 36) -> str:
+    """将首个用户问题压缩成可辨识的会话标题。"""
+    text = re.sub(r"\s+", " ", str(query or "")).strip()
+    if not text:
+        return "新对话"
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip(" ，,。！？!?；;：:") + "…"
 
 
 class DocumentStatus(str, Enum):

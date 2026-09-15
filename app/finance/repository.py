@@ -6,7 +6,10 @@ from typing import Any
 
 from pymongo import MongoClient
 
-from app.finance.models import DocumentStatus, FinancialDocument, FinancialEntity, ImportTask, Message, QueryResult, Session
+from app.finance.models import (
+    DocumentStatus, FinancialDocument, FinancialEntity, ImportTask, Message, QueryResult, Session,
+    session_title_from_query,
+)
 
 
 class FinanceRepository:
@@ -173,7 +176,20 @@ class FinanceRepository:
         return Session.model_validate(raw) if raw else None
 
     def list_sessions(self) -> list[Session]:
-        return [Session.model_validate(self._clean(x)) for x in self.sessions.find().sort("updated_at", -1)]
+        sessions: list[Session] = []
+        for raw in self.sessions.find().sort("updated_at", -1):
+            session = Session.model_validate(self._clean(raw))
+            # 兼容早期已经写入的默认标题；不修改历史消息，只在列表响应中提供可辨识标题。
+            if session.title == "新对话":
+                first_user_message = self.messages.find_one(
+                    {"session_id": session.session_id, "role": "user"},
+                    {"content": 1},
+                    sort=[("created_at", 1)],
+                )
+                if first_user_message and first_user_message.get("content"):
+                    session.title = session_title_from_query(first_user_message["content"])
+            sessions.append(session)
+        return sessions
 
     def claim_session_query(self, session_id: str, query_id: str) -> bool:
         """Atomically reserve a session for one in-flight query."""
@@ -187,7 +203,12 @@ class FinanceRepository:
         self.sessions.update_one({"session_id": session_id, "active_query_id": query_id}, {"$set": {"active_query_id": None}})
     def save_message(self, message: Message) -> None:
         self.messages.insert_one(self._dump(message))
-        self.sessions.update_one({"session_id": message.session_id}, {"$set": {"updated_at": message.created_at}})
+        update: dict[str, Any] = {"updated_at": message.created_at}
+        if message.role == "user":
+            session = self.sessions.find_one({"session_id": message.session_id}, {"title": 1})
+            if session and session.get("title") == "新对话":
+                update["title"] = session_title_from_query(message.content)
+        self.sessions.update_one({"session_id": message.session_id}, {"$set": update})
 
     def list_messages(self, session_id: str) -> list[Message]:
         return [Message.model_validate(self._clean(x)) for x in self.messages.find({"session_id": session_id}).sort("created_at", 1)]

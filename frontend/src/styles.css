@@ -33,12 +33,17 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .side-section-title { color: #8a9aaa; }
 .session-count .ant-badge-count { background: #e5f4f3; color: #0b7285; box-shadow: none; font-size: 11px; }
 .session-list { min-height: 110px; padding: 0 10px; }
-.session-list .ant-list-items { display: grid; gap: 2px; }
-.session-item { min-height: 39px; padding: 6px 8px !important; border: 0 !important; border-radius: 8px; transition: background .2s ease; }
-.session-item:hover, .session-item.selected { background: #f0f7f7; }
+.session-list .ant-list-items { display: grid; gap: 4px; }
+.session-item { min-height: 46px; padding: 6px 8px !important; border: 1px solid transparent !important; border-radius: 9px; transition: background .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.session-item:hover { border-color: #dce9e9 !important; background: #f7fbfb; }
+.session-item.selected { border-color: #bfe2de !important; background: #eaf8f6; box-shadow: inset 3px 0 #0b7285; }
 .session-link { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; color: #4e6578; font-size: 13px; text-decoration: none; }
-.session-link .anticon { flex: 0 0 auto; color: #8ea2b0; }
-.session-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item.selected .session-link { color: #075e63; font-weight: 600; }
+.session-link > .anticon { flex: 0 0 auto; color: #8ea2b0; }
+.session-item.selected .session-link > .anticon { color: #0b7285; }
+.session-label { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.session-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-label small { color: #94a4af; font-size: 10px; font-weight: 400; line-height: 1.2; }
 .session-delete { opacity: 0; color: #8a9aaa !important; }
 .session-item:hover .session-delete, .session-item.selected .session-delete { opacity: 1; }
 .muted-empty { color: #a2b0bb; font-size: 12px; }

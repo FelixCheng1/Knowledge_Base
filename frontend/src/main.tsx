@@ -102,6 +102,21 @@ function formatTime(value: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+function formatSessionTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+
+function displaySessionTitle(session: Session) {
+  const title = session.title?.trim()
+  return title && title !== '新对话' ? title : `新对话 · ${session.session_id.slice(0, 6)}`
+}
+
+function latestMessageCitations(items: Message[]) {
+  const latestAssistant = [...items].reverse().find(item => item.role === 'assistant')
+  return latestAssistant?.citations ?? []
+}
+
 function AppShell() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [documents, setDocuments] = useState<Document[]>([])
@@ -143,25 +158,28 @@ function AppShell() {
           size="small"
           dataSource={sessions.slice(0, 8)}
           locale={{ emptyText: <span className="muted-empty">暂无会话</span> }}
-          renderItem={item => <List.Item className={`session-item ${selectedSessionId === item.session_id ? 'selected' : ''}`}>
-            <Link to={`/?session=${item.session_id}`} className="session-link">
-              <MessageOutlined />
-              <span title={item.title}>{item.title}</span>
-            </Link>
-            <Tooltip title="删除会话">
-              <Button
-                aria-label={`删除会话 ${item.title}`}
+          renderItem={item => {
+            const title = displaySessionTitle(item)
+            return <List.Item className={`session-item ${selectedSessionId === item.session_id ? 'selected' : ''}`}>
+              <Link to={`/?session=${item.session_id}`} className="session-link" title={title}>
+                <MessageOutlined />
+                <span className="session-label"><span>{title}</span><small>{formatSessionTime(item.updated_at)}</small></span>
+              </Link>
+              <Tooltip title="删除会话">
+                <Button
+                  aria-label={`删除会话 ${title}`}
                 className="session-delete"
                 type="text"
                 size="small"
                 icon={<DeleteOutlined />}
-                onClick={() => api.deleteSession(item.session_id).then(async () => {
-                  if (selectedSessionId === item.session_id) navigate('/')
-                  await refresh()
-                }).catch(err => message.error(err instanceof Error ? err.message : '删除失败'))}
-              />
-            </Tooltip>
-          </List.Item>}
+                  onClick={() => api.deleteSession(item.session_id).then(async () => {
+                    if (selectedSessionId === item.session_id) navigate('/')
+                    await refresh()
+                  }).catch(err => message.error(err instanceof Error ? err.message : '删除失败'))}
+                />
+              </Tooltip>
+            </List.Item>
+          }}
         />
       </div>
       <div className="sider-footer">
@@ -262,7 +280,15 @@ function Chat({ documents, onRefresh }: { documents: Document[]; onRefresh: () =
     let cancelled = false
     if (!selectedSessionId) { setSessionId(undefined); setMessages([]); setCitations([]); return () => { cancelled = true } }
     setSessionId(selectedSessionId); setCitations([])
-    void api.messages(selectedSessionId).then(result => { if (!cancelled) setMessages(result.items) }).catch(() => { if (!cancelled) setMessages([]) })
+    void api.messages(selectedSessionId).then(result => {
+      if (cancelled) return
+      setMessages(result.items)
+      setCitations(latestMessageCitations(result.items))
+    }).catch(() => {
+      if (cancelled) return
+      setMessages([])
+      setCitations([])
+    })
     return () => { cancelled = true }
   }, [selectedSessionId])
 
@@ -470,7 +496,7 @@ function Documents({ documents, onRefresh }: { documents: Document[]; onRefresh:
             <Button type="default" icon={<EditOutlined />} onClick={() => openEdit(doc)}>修正</Button>
             <Upload beforeUpload={file => uploadVersion(doc, file)} showUploadList={false} accept=".pdf,.doc,.docx,.md"><Button icon={<ReloadOutlined />}>新版本</Button></Upload>
             <Button icon={<EyeOutlined />} href={api.fileUrl(doc.document_id, doc.active_version_id ?? undefined)} target="_blank">原文</Button>
-            {doc.status !== 'disabled' && <Button danger type="text" onClick={() => api.disable(doc.document_id).then(onRefresh).catch(err => message.error(err instanceof Error ? err.message : '停用失败'))}>停用</Button>}
+            {doc.status !== 'disabled' && <Button danger type="text" onClick={() => api.patchDocument(doc.document_id, { status: 'disabled' }).then(onRefresh).catch(err => message.error(err instanceof Error ? err.message : '停用失败'))}>停用</Button>}
             {failedTask && <Button type="link" icon={<ReloadOutlined />} onClick={() => void retry(failedTask)}>重试处理</Button>}
           </Space></div>
         </div>

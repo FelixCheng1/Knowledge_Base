@@ -139,7 +139,7 @@ def disable_document(document_id: str, service: FinanceService = Depends(get_ser
         raise _not_found("资料")
 
 
-@router.get("/documents/{document_id}/file", tags=["Documents"], summary="下载原始资料", operation_id="downloadDocument", responses={404: {"model": ErrorResponse}})
+@router.get("/documents/{document_id}/file", tags=["Documents"], summary="下载原始资料", response_class=FileResponse, operation_id="downloadDocument", responses={200: {"description": "原始文件流", "content": {"application/octet-stream": {}}}, 404: {"model": ErrorResponse}})
 def original_file(document_id: str, version_id: str | None = Query(default=None, min_length=1, max_length=64, description="引用对应的版本 ID；省略时使用活动版本"), service: FinanceService = Depends(get_service)):
     document = service.repo.get_document(document_id)
     selected_version_id = version_id or (document.active_version_id if document else None)
@@ -170,8 +170,9 @@ def retry_import(task_id: str, background_tasks: BackgroundTasks, service: Finan
     task = service.repo.get_task(task_id)
     if not task:
         raise _not_found("导入任务")
-    if task.status == DocumentStatus.PROCESSING:
-        raise HTTPException(status_code=409, detail="任务正在处理")
+    document = service.repo.get_document(task.document_id)
+    if task.status == DocumentStatus.PROCESSING or (task.status == DocumentStatus.ACTIVE and document and document.active_version_id == task.version_id):
+        raise HTTPException(status_code=409, detail="任务正在处理或版本已经生效")
     background_tasks.add_task(service.import_document, task_id)
     return {"task_id": task_id, "status": "pending"}
 

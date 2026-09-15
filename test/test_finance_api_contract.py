@@ -80,6 +80,15 @@ class FinanceApiContractTest(unittest.TestCase):
         self.assertEqual(set(document_type), {"fund_product", "wealth_management", "company_report", "policy", "education_or_faq", "unknown"})
         file_parameters = self.schema["paths"]["/api/v1/documents/{document_id}/file"]["get"]["parameters"]
         self.assertIn("version_id", {item["name"] for item in file_parameters})
+    def test_document_management_contract_exposes_filters_versions_and_file_stream(self) -> None:
+        documents = self.schema["paths"]["/api/v1/documents"]
+        parameters = {item["name"]: item for item in documents["get"]["parameters"]}
+        self.assertIn("status", parameters)
+        self.assertIn("document_type", parameters)
+        version_upload = self.schema["paths"]["/api/v1/documents/{document_id}/versions"]["post"]
+        self.assertIn("multipart/form-data", version_upload["requestBody"]["content"])
+        file_response = self.schema["paths"]["/api/v1/documents/{document_id}/file"]["get"]["responses"]["200"]
+        self.assertIn("application/octet-stream", file_response["content"])
     def test_sse_operation_declares_event_stream_content(self) -> None:
         response = self.schema["paths"]["/api/v1/queries/{query_id}/events"]["get"]["responses"]["200"]
         self.assertIn("text/event-stream", response["content"])

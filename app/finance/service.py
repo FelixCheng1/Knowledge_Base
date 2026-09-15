@@ -278,6 +278,7 @@ class FinanceService:
         except Exception as exc:
             result.status, result.error, result.updated_at = "failed", str(exc), now()
             self.repo.save_query(result)
+            self.repo.save_message(Message(session_id=result.session_id, role="assistant", content=f"查询失败：{exc}"))
             self._push(query_id, "error", {"error": str(exc)})
         finally:
             self.repo.release_session_query(result.session_id, result.query_id)

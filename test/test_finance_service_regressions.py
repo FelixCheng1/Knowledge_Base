@@ -250,6 +250,18 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertEqual(len(citations), 6)
         self.assertEqual(citations[4].locator.excerpt, "4")
 
+    def test_answer_query_persists_failure_message(self) -> None:
+        from app.finance.models import QueryResult
+
+        result = QueryResult(query_id="q1", session_id="s1")
+        self.repo.get_query.return_value = result
+        self.service._understand_query = Mock(side_effect=RuntimeError("模型不可用"))
+        with patch.object(FinanceService, "_push"):
+            returned = self.service.answer_query("q1", "问题")
+        self.assertEqual(returned.status, "failed")
+        saved_messages = [call.args[0] for call in self.repo.save_message.call_args_list]
+        self.assertTrue(any(item.role == "assistant" and "模型不可用" in item.content for item in saved_messages))
+
     def test_submit_query_uses_atomic_session_claim(self) -> None:
         from app.finance.models import Session
         self.repo.get_session.return_value = Session(session_id="session-1")

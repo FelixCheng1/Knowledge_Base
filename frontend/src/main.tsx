@@ -156,7 +156,7 @@ function AppShell() {
       <div className="session-list">
         <List
           size="small"
-          dataSource={sessions.slice(0, 8)}
+          dataSource={sessions}
           locale={{ emptyText: <span className="muted-empty">暂无会话</span> }}
           renderItem={item => {
             const title = displaySessionTitle(item)
@@ -199,7 +199,7 @@ function AppShell() {
       </Header>
       <Content className="page-content">
         <Routes>
-          <Route path="/" element={<Chat documents={documents} onRefresh={refresh} />} />
+          <Route path="/" element={<Chat documents={documents} sessions={sessions} onRefresh={refresh} />} />
           <Route path="/documents" element={<Documents documents={documents} onRefresh={refresh} />} />
         </Routes>
       </Content>
@@ -264,7 +264,7 @@ function PdfPreview({ src, initialPage }: { src: string; initialPage: number }) 
   </div>
 }
 
-function Chat({ documents, onRefresh }: { documents: Document[]; onRefresh: () => Promise<void> }) {
+function Chat({ documents, sessions, onRefresh }: { documents: Document[]; sessions: Session[]; onRefresh: () => Promise<void> }) {
   const [sessionId, setSessionId] = useState<string>()
   const [messages, setMessages] = useState<Message[]>([])
   const [question, setQuestion] = useState('')
@@ -272,43 +272,99 @@ function Chat({ documents, onRefresh }: { documents: Document[]; onRefresh: () =
   const [progress, setProgress] = useState('')
   const [citations, setCitations] = useState<Citation[]>([])
   const [preview, setPreview] = useState<PreviewState>()
+  const pendingAssistantRef = useRef<Map<string, Message>>(new Map())
+  const recoveringQueriesRef = useRef<Set<string>>(new Set())
+  const activeSessionRef = useRef<string | undefined>(undefined)
   const navigate = useNavigate()
   const { search } = useLocation()
   const selectedSessionId = new URLSearchParams(search).get('session')
 
+  const resumeQuery = useCallback(async (queryId: string, targetSessionId: string) => {
+    if (recoveringQueriesRef.current.has(queryId)) return
+    recoveringQueriesRef.current.add(queryId)
+    const assistantId = `pending-${queryId}`
+    const pendingAssistant: Message = {
+      message_id: assistantId, session_id: targetSessionId, role: 'assistant', content: '', citations: [],
+      created_at: new Date().toISOString(),
+    }
+    pendingAssistantRef.current.set(targetSessionId, pendingAssistant)
+    setMessages(old => old.some(item => item.message_id === assistantId) ? old : [...old, pendingAssistant])
+    setLoading(true)
+    setProgress('恢复查询')
+    try {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const result = await api.result(queryId)
+        if (result.status !== 'processing') {
+          pendingAssistantRef.current.delete(targetSessionId)
+          if (activeSessionRef.current === targetSessionId) {
+            setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: result.answer || result.error || '查询失败', citations: result.citations ?? [] } : item))
+            setCitations(result.citations ?? [])
+            setLoading(false)
+            setProgress('')
+          }
+          void onRefresh()
+          return
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+      }
+      if (activeSessionRef.current === targetSessionId) {
+        setLoading(false)
+        setProgress('')
+        message.warning('查询仍在后台处理，可稍后从会话历史查看结果')
+      }
+    } catch {
+      if (activeSessionRef.current === targetSessionId) {
+        setLoading(false)
+        setProgress('')
+      }
+    } finally {
+      recoveringQueriesRef.current.delete(queryId)
+    }
+  }, [onRefresh])
+
   useEffect(() => {
     let cancelled = false
+    activeSessionRef.current = selectedSessionId ?? undefined
     if (!selectedSessionId) { setSessionId(undefined); setMessages([]); setCitations([]); return () => { cancelled = true } }
     setSessionId(selectedSessionId); setCitations([])
     void api.messages(selectedSessionId).then(result => {
       if (cancelled) return
-      setMessages(result.items)
-      setCitations(latestMessageCitations(result.items))
+      const pendingAssistant = pendingAssistantRef.current.get(selectedSessionId)
+      const merged = pendingAssistant
+        ? [...result.items, pendingAssistant].sort((left, right) => left.created_at.localeCompare(right.created_at))
+        : result.items
+      setMessages(merged)
+      setCitations(latestMessageCitations(merged))
+      const activeQueryId = sessions.find(item => item.session_id === selectedSessionId)?.active_query_id
+      if (activeQueryId && !pendingAssistant) void resumeQuery(activeQueryId, selectedSessionId)
     }).catch(() => {
-      if (cancelled) return
-      setMessages([])
-      setCitations([])
+      if (!cancelled) { setMessages([]); setCitations([]) }
     })
     return () => { cancelled = true }
-  }, [selectedSessionId])
+  }, [selectedSessionId, sessions, resumeQuery])
 
   const ask = async () => {
     const content = question.trim()
     if (!content || loading) return
     setQuestion(''); setLoading(true); setCitations([]); setProgress('理解问题')
-    setMessages(old => [...old, { message_id: crypto.randomUUID(), session_id: sessionId ?? '', role: 'user', content, citations: [], created_at: new Date().toISOString() }])
+    const userMessageId = `pending-user-${crypto.randomUUID()}`
+    setMessages(old => [...old, { message_id: userMessageId, session_id: sessionId ?? '', role: 'user', content, citations: [], created_at: new Date().toISOString() }])
     try {
       const queued = await api.ask(content, sessionId)
       setSessionId(queued.session_id)
+      activeSessionRef.current = queued.session_id
       const shouldNavigate = !sessionId
-      const assistantId = crypto.randomUUID()
-      setMessages(old => [...old, { message_id: assistantId, session_id: queued.session_id, role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }])
+      const assistantId = `pending-${queued.query_id}`
+      const pendingAssistant: Message = { message_id: assistantId, session_id: queued.session_id, role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
+      pendingAssistantRef.current.set(queued.session_id, pendingAssistant)
+      setMessages(old => [...old.map(item => item.message_id === userMessageId ? { ...item, session_id: queued.session_id } : item), pendingAssistant])
       let finished = false
       let stream: EventSource | undefined
       const close = () => { setLoading(false); setProgress(''); stream?.close() }
       const finalize = (result: QueryResult) => {
         if (finished) return
         finished = true
+        pendingAssistantRef.current.delete(queued.session_id)
         setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: result.answer || result.error || '查询失败', citations: result.citations ?? [] } : item))
         setCitations(result.citations ?? []); close()
         if (shouldNavigate) navigate(`/?session=${queued.session_id}`, { replace: true })
@@ -317,6 +373,7 @@ function Chat({ documents, onRefresh }: { documents: Document[]; onRefresh: () =
       const handleError = (errorText: string) => {
         if (finished) return
         finished = true
+        pendingAssistantRef.current.delete(queued.session_id)
         setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: errorText || '查询失败' } : item)); close()
       }
       const recover = async () => {
@@ -329,12 +386,18 @@ function Chat({ documents, onRefresh }: { documents: Document[]; onRefresh: () =
       void recover()
       stream = new EventSource(api.eventsUrl(queued.query_id))
       stream.addEventListener('progress', event => { const { status } = JSON.parse((event as MessageEvent<string>).data); setProgress(status) })
-      stream.addEventListener('delta', event => { const { delta } = JSON.parse((event as MessageEvent<string>).data); setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: item.content + delta } : item)) })
+      stream.addEventListener('delta', event => {
+        const { delta } = JSON.parse((event as MessageEvent<string>).data)
+        const pending = pendingAssistantRef.current.get(queued.session_id)
+        if (pending) pendingAssistantRef.current.set(queued.session_id, { ...pending, content: pending.content + delta })
+        setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: item.content + delta } : item))
+      })
       stream.addEventListener('final', event => finalize(JSON.parse((event as MessageEvent<string>).data) as QueryResult))
       stream.addEventListener('error', event => { const payload = (event as MessageEvent<string>).data; if (!payload) return; try { handleError(JSON.parse(payload).error || '查询失败') } catch { handleError('查询失败') } })
       stream.onerror = () => { stream?.close() }
     } catch (error) {
       message.error(error instanceof Error ? error.message : '提交失败')
+      if (sessionId) pendingAssistantRef.current.delete(sessionId)
       setMessages(old => old.filter(item => item.role !== 'assistant' || item.content)); setLoading(false); setProgress('')
     }
   }

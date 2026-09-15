@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app.finance.models import DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator
+from app.finance.models import DocumentType, DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator
 from app.finance.service import FinanceService
 
 
@@ -111,6 +111,14 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         result = self.service.search('不存在的基金赎回费', understanding=understanding)
         self.assertEqual(result, [])
         self.repo.active_version_pairs.assert_not_called()
+
+    def test_document_type_filter_uses_current_document_metadata(self) -> None:
+        self.repo.documents_for_entity_ids.return_value = []
+        self.repo.active_version_pairs.return_value = []
+        self.service._client = Mock(return_value=Mock())
+        understanding = QuestionUnderstanding(document_type_filter=DocumentType.EDUCATION)
+        self.assertEqual(self.service.search("什么是基金净值", understanding=understanding), [])
+        self.repo.active_version_pairs.assert_called_once_with(None, None, "education_or_faq")
 
     def test_title_and_entity_scope_intersection_cannot_expand_to_global(self) -> None:
         self.repo.find_entities.return_value = [types.SimpleNamespace(entity_id='entity-1')]

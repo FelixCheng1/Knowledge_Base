@@ -21,7 +21,7 @@ class FinanceRepository:
         self.sessions = self.db.finance_sessions
         self.messages = self.db.finance_messages
         self.queries = self.db.finance_queries
-        self._ensure_indexes()
+        self._indexes_ready = False
 
     def _ensure_indexes(self) -> None:
         self.documents.create_index("document_id", unique=True)
@@ -74,6 +74,48 @@ class FinanceRepository:
             return []
         return [item["document_id"] for item in self.documents.find({"entity_ids": {"$in": entity_ids}, "status": DocumentStatus.ACTIVE.value}, {"document_id": 1})]
 
+    def active_version_pairs(self, document_ids: list[str] | None = None, time_scope: str | None = None) -> list[tuple[str, str]]:
+        """Return active document/version pairs, optionally constrained by a time scope."""
+        query: dict[str, Any] = {
+            "status": DocumentStatus.ACTIVE.value,
+            "active_version_id": {"$type": "string", "$ne": ""},
+        }
+        if document_ids:
+            query["document_id"] = {"$in": document_ids}
+        pairs: list[tuple[str, str]] = []
+        for item in self.documents.find(query, {"document_id": 1, "active_version_id": 1, "versions": 1}):
+            version_id = item.get("active_version_id")
+            if not version_id:
+                continue
+            if time_scope:
+                version = next((v for v in item.get("versions", []) if v.get("version_id") == version_id), {})
+                if not self._version_matches_time(version, time_scope):
+                    continue
+            pairs.append((item["document_id"], version_id))
+        return pairs
+
+    @staticmethod
+    def _version_matches_time(version: dict[str, Any], time_scope: str) -> bool:
+        scope = re.sub(r"\s", "", time_scope).lower()
+        text = " ".join(str(version.get(key) or "") for key in ("publish_date", "report_period", "effective_date")).lower()
+        if scope in re.sub(r"\s", "", text):
+            return True
+        year = re.search(r"20\d{2}", scope)
+        if not year or year.group(0) not in text:
+            return False
+        quarter = re.search(r"q([1-4])", scope)
+        if quarter:
+            markers = ("一", "二", "三", "四")
+            return f"{markers[int(quarter.group(1)) - 1]}季度" in text or f"第{quarter.group(1)}季度" in text
+        return "年度" in scope and "年度" in text
+
+    def documents_for_title(self, term: str) -> list[str]:
+        escaped = {"$regex": re.escape(term), "$options": "i"}
+        return [
+            item["document_id"]
+            for item in self.documents.find({"title": escaped, "status": DocumentStatus.ACTIVE.value}, {"document_id": 1})
+        ]
+
     def save_task(self, task: ImportTask) -> None:
         self.tasks.replace_one({"task_id": task.task_id}, self._dump(task), upsert=True)
 
@@ -91,6 +133,16 @@ class FinanceRepository:
     def list_sessions(self) -> list[Session]:
         return [Session.model_validate(self._clean(x)) for x in self.sessions.find().sort("updated_at", -1)]
 
+    def claim_session_query(self, session_id: str, query_id: str) -> bool:
+        """Atomically reserve a session for one in-flight query."""
+        result = self.sessions.update_one(
+            {"session_id": session_id, "$or": [{"active_query_id": None}, {"active_query_id": {"$exists": False}}]},
+            {"$set": {"active_query_id": query_id}},
+        )
+        return result.modified_count == 1
+
+    def release_session_query(self, session_id: str, query_id: str) -> None:
+        self.sessions.update_one({"session_id": session_id, "active_query_id": query_id}, {"$set": {"active_query_id": None}})
     def save_message(self, message: Message) -> None:
         self.messages.insert_one(self._dump(message))
         self.sessions.update_one({"session_id": message.session_id}, {"$set": {"updated_at": message.created_at}})
@@ -121,4 +173,7 @@ class FinanceRepository:
 
     def readiness(self) -> bool:
         self.client.admin.command("ping")
+        if not self._indexes_ready:
+            self._ensure_indexes()
+            self._indexes_ready = True
         return True

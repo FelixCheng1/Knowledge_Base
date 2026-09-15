@@ -125,11 +125,18 @@ class MinerUParser:
         # CDN 下载同样绕过系统代理（trust_env=False），代理会截断 OSS 的 TLS 连接。
         with requests.Session() as session:
             session.trust_env = False
-            archive.write_bytes(session.get(result_url, timeout=120).content)
+            download = session.get(result_url, timeout=120)
+            download.raise_for_status()
+            archive.write_bytes(download.content)
         extracted = output_dir / "mineru"
         if extracted.exists():
             shutil.rmtree(extracted)
         with zipfile.ZipFile(archive) as zf:
+            root = extracted.resolve()
+            for member in zf.infolist():
+                target = (extracted / member.filename).resolve()
+                if target != root and root not in target.parents:
+                    raise RuntimeError("MinerU 结果包含非法文件路径")
             zf.extractall(extracted)
         markdown = next(extracted.rglob("*.md"), None)
         if markdown is None:
@@ -158,6 +165,7 @@ class MinerUParser:
             return self._markdown_blocks(markdown.read_text(encoding="utf-8"))
         raw = json.loads(content_list.read_text(encoding="utf-8"))
         blocks: list[dict] = []
+        section_stack: list[str] = []
         for item in raw:
             if not isinstance(item, dict):
                 continue
@@ -173,5 +181,11 @@ class MinerUParser:
             else:
                 continue
             if content.strip():
-                blocks.append({"type": kind, "content": content, "page_idx": item.get("page_idx"), "section": ""})
+                level = item.get("text_level") if kind == "text" else None
+                if isinstance(level, int) and level > 0:
+                    section_stack = section_stack[: level - 1]
+                    section_stack.append(content.strip())
+                section = " / ".join(section_stack) or "全文"
+                blocks.append({"type": kind, "content": content, "page_idx": item.get("page_idx"),
+                               "section": section, "text_level": level})
         return blocks or self._markdown_blocks(markdown.read_text(encoding="utf-8"))

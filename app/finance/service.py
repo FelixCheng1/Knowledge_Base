@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -32,19 +33,25 @@ class FinanceService:
 
     def create_import(self, upload_name: str, content: bytes) -> tuple[FinancialDocument, ImportTask]:
         checksum = hashlib.sha256(content).hexdigest()
-        duplicate = next((d for d in self.repo.list_documents() if any(v.checksum == checksum for v in d.versions)), None)
-        if duplicate:
-            task = ImportTask(document_id=duplicate.document_id, version_id=duplicate.active_version_id or "", status=DocumentStatus.ACTIVE, stage="内容已存在")
-            self.repo.save_task(task)
-            return duplicate, task
-        document = FinancialDocument(title=Path(upload_name).stem)
+        for existing_document in self.repo.list_documents():
+            for existing_version in existing_document.versions:
+                if existing_version.checksum != checksum:
+                    continue
+                active = existing_document.active_version_id == existing_version.version_id and existing_document.status == DocumentStatus.ACTIVE
+                task = ImportTask(document_id=existing_document.document_id, version_id=existing_version.version_id,
+                                  status=DocumentStatus.ACTIVE if active else DocumentStatus.PENDING,
+                                  stage="内容已存在" if active else "内容已存在，等待重试")
+                self.repo.save_task(task)
+                return existing_document, task
+        safe_name = self._safe_filename(upload_name)
+        document = FinancialDocument(title=Path(safe_name).stem)
         version_dir = self.work_dir / document.document_id
         version_dir.mkdir(parents=True, exist_ok=True)
-        file_path = version_dir / upload_name
+        file_path = version_dir / safe_name
         file_path.write_bytes(content)
         from app.finance.models import DocumentVersion
         version = DocumentVersion(original_name=upload_name, stored_path=str(file_path), checksum=checksum)
-        version.object_key = self._upload_to_object_storage(file_path, f"documents/{document.document_id}/{version.version_id}/{upload_name}")
+        version.object_key = self._upload_to_object_storage(file_path, f"documents/{document.document_id}/{version.version_id}/{safe_name}")
         document.versions.append(version)
         task = ImportTask(document_id=document.document_id, version_id=version.version_id)
         self.repo.save_document(document)
@@ -57,16 +64,20 @@ class FinanceService:
         checksum = hashlib.sha256(content).hexdigest()
         existing = next((version for version in document.versions if version.checksum == checksum), None)
         if existing:
-            task = ImportTask(document_id=document_id, version_id=existing.version_id, status=DocumentStatus.ACTIVE, stage="内容已存在")
+            active = document.active_version_id == existing.version_id and document.status == DocumentStatus.ACTIVE
+            task = ImportTask(document_id=document_id, version_id=existing.version_id,
+                              status=DocumentStatus.ACTIVE if active else DocumentStatus.PENDING,
+                              stage="内容已存在" if active else "内容已存在，等待重试")
             self.repo.save_task(task)
             return document, task
         from app.finance.models import DocumentVersion
+        safe_name = self._safe_filename(upload_name)
         version_dir = self.work_dir / document.document_id / new_id()
         version_dir.mkdir(parents=True, exist_ok=True)
-        file_path = version_dir / upload_name
+        file_path = version_dir / safe_name
         file_path.write_bytes(content)
         version = DocumentVersion(original_name=upload_name, stored_path=str(file_path), checksum=checksum)
-        version.object_key = self._upload_to_object_storage(file_path, f"documents/{document.document_id}/{version.version_id}/{upload_name}")
+        version.object_key = self._upload_to_object_storage(file_path, f"documents/{document.document_id}/{version.version_id}/{safe_name}")
         document.versions.append(version)
         document.updated_at = now()
         self.repo.save_document(document)
@@ -79,7 +90,8 @@ class FinanceService:
         document = self._must_document(task.document_id)
         version = next(v for v in document.versions if v.version_id == task.version_id)
         self._set_task(task, DocumentStatus.PROCESSING, "正在解析资料")
-        self.repo.update_document(document.document_id, {"status": DocumentStatus.PROCESSING.value, "error": None})
+        if not document.active_version_id:
+            self.repo.update_document(document.document_id, {"status": DocumentStatus.PROCESSING.value, "error": None})
         try:
             parse_dir = self.work_dir / document.document_id / version.version_id
             markdown, blocks = self.parser.parse(Path(version.stored_path), parse_dir)
@@ -88,6 +100,8 @@ class FinanceService:
             metadata, entities = self._extract_metadata(document.title, blocks)
             document.document_type = metadata.pop("document_type")
             document.metadata = metadata
+            version.publish_date = metadata.get("publish_date")
+            version.report_period = metadata.get("report_period")
             document.entity_ids = []
             for entity in entities:
                 self.repo.save_entity(entity)
@@ -129,16 +143,23 @@ class FinanceService:
         assert updated
         return updated
 
+    @staticmethod
+    def _safe_filename(upload_name: str) -> str:
+        candidate = Path(upload_name.replace("\\", "/")).name
+        if not candidate or candidate in {".", ".."}:
+            raise ValueError("文件名无效")
+        return candidate
     def create_session(self) -> Session:
         session = Session()
         self.repo.save_session(session)
         return session
 
-    def original_file_url(self, document_id: str) -> str | None:
+    def original_file_url(self, document_id: str, version_id: str | None = None) -> str | None:
         document = self._must_document(document_id)
-        if not document.active_version_id:
+        selected_version_id = version_id or document.active_version_id
+        if not selected_version_id:
             return None
-        version = next((item for item in document.versions if item.version_id == document.active_version_id), None)
+        version = next((item for item in document.versions if item.version_id == selected_version_id), None)
         if not version or not version.object_key:
             return None
         endpoint = os.getenv("MINIO_ENDPOINT")
@@ -153,11 +174,15 @@ class FinanceService:
         session = self.repo.get_session(session_id) if session_id else None
         if session is None:
             session = self.create_session()
-        if self.repo.has_active_query(session.session_id):
-            raise RuntimeError("该会话已有查询正在处理，请等待完成后再提问")
         result = QueryResult(session_id=session.session_id)
-        self.repo.save_query(result)
-        self.repo.save_message(Message(session_id=session.session_id, role="user", content=query))
+        if not self.repo.claim_session_query(session.session_id, result.query_id):
+            raise RuntimeError("该会话已有查询正在处理，请等待完成后再提问")
+        try:
+            self.repo.save_query(result)
+            self.repo.save_message(Message(session_id=session.session_id, role="user", content=query))
+        except Exception:
+            self.repo.release_session_query(session.session_id, result.query_id)
+            raise
         return result
 
     def recover_interrupted_queries(self) -> int:
@@ -197,6 +222,8 @@ class FinanceService:
             result.status, result.error, result.updated_at = "failed", str(exc), now()
             self.repo.save_query(result)
             self._push(query_id, "error", {"error": str(exc)})
+        finally:
+            self.repo.release_session_query(result.session_id, result.query_id)
         return result
 
     @staticmethod
@@ -219,7 +246,6 @@ class FinanceService:
         """
         prior = [item for item in history[:-1] if item.role in {"user", "assistant"}][-6:]
         history_text = "\n".join(f"{'用户' if item.role == 'user' else '助手'}：{item.content[:300]}" for item in prior) or "（无）"
-        type_values = "/".join(item.value for item in DocumentType if item is not DocumentType.UNKNOWN)
         system = """你是金融资料问答系统的问题理解模块。根据对话历史和当前问题，输出 JSON：
 {"question_type": "fact|concept|summary", "rewritten_query": "消解指代并补全上下文后的独立完整问题",
  "mentioned_codes": ["用户明确给出的6位基金代码或字母开头的理财产品代码"],
@@ -237,30 +263,47 @@ class FinanceService:
         prompt = f"{system}\n\n对话历史：\n{history_text}\n\n当前问题：{query}\n\n输出："
         try:
             raw = get_llm_client(json_mode=True).invoke(prompt).content
-            data = json.loads(re.search(r"\{.*\}", raw, re.DOTALL).group(0))
+            raw_text = raw if isinstance(raw, str) else str(raw)
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if not match:
+                raise ValueError("问题理解模型未返回 JSON")
+            data = json.loads(match.group(0))
+            if not isinstance(data, dict):
+                raise ValueError("问题理解模型返回的 JSON 不是对象")
         except Exception:
-            # 理解模块失败时退化为无过滤检索，保证问答链路不中断。
+            if re.search(r"它|这家公司|该产品|这个基金|这份报告|这个产品", query):
+                return QuestionUnderstanding(
+                    rewritten_query=query,
+                    needs_clarification=True,
+                    clarification_question="我没有可靠识别出你指向的资料对象，请补充产品名称、代码或报告名称。",
+                )
             return QuestionUnderstanding(rewritten_query=query)
         filter_value = data.get("document_type_filter")
+        question_type = data.get("question_type") if data.get("question_type") in {"fact", "concept", "summary"} else "fact"
+        mentioned_names = [str(item) for item in (data.get("mentioned_names") or []) if str(item).strip()]
+        mentioned_codes = [str(item) for item in (data.get("mentioned_codes") or [])]
+        target_title = data.get("target_document_title") or (mentioned_names[0] if question_type == "summary" and mentioned_names else None)
+        needs_clarification = bool(data.get("needs_clarification"))
+        clarification_question = str(data.get("clarification_question") or "")
+        if question_type == "summary" and not target_title and not mentioned_names and not mentioned_codes:
+            needs_clarification = True
+            clarification_question = clarification_question or "请提供要总结的资料名称或产品代码。"
         return QuestionUnderstanding(
-            question_type=data.get("question_type") if data.get("question_type") in {"fact", "concept", "summary"} else "fact",
+            question_type=question_type,
             rewritten_query=str(data.get("rewritten_query") or query),
-            mentioned_codes=[str(item) for item in (data.get("mentioned_codes") or [])],
-            mentioned_names=[str(item) for item in (data.get("mentioned_names") or []) if str(item).strip()],
+            mentioned_codes=mentioned_codes,
+            mentioned_names=mentioned_names,
             document_type_filter=filter_value if filter_value in {item.value for item in DocumentType} else None,
-            target_document_title=data.get("target_document_title") or None,
+            target_document_title=target_title,
             time_scope=data.get("time_scope") or None,
-            needs_clarification=bool(data.get("needs_clarification")),
-            clarification_question=str(data.get("clarification_question") or ""),
+            needs_clarification=needs_clarification,
+            clarification_question=clarification_question,
         )
 
     def search(self, query: str, limit: int = 8, understanding: QuestionUnderstanding | None = None) -> list[Evidence]:
         client = self._client()
-        from app.lm.embedding_utils import generate_embeddings
         # 理解模块可用时以消解后的独立问题做向量匹配，指代（“它的费率”）才能召回正确资料。
         search_text = (understanding.rewritten_query if understanding and understanding.rewritten_query else query)
-        embedding = generate_embeddings([search_text])
-        from app.clients.milvus_utils import create_hybrid_search_requests, hybrid_search
         # 精确代码优先：正则直取 + 理解模块补充，均按字符串匹配（保留前导零）。
         exact_codes = list(dict.fromkeys(
             re.findall(r"(?<!\d)(?:\d{6}|[A-Z]{4,}\d{3,})(?!\d)", query) + (understanding.mentioned_codes if understanding else []),
@@ -270,14 +313,32 @@ class FinanceService:
             for name in understanding.mentioned_names:
                 entity_ids.extend(entity.entity_id for entity in self.repo.find_entities(name))
         document_ids = self.repo.documents_for_entity_ids(entity_ids)
-        conditions: list[str] = []
         if exact_codes and not document_ids:
-            # 用户明确给出代码但库中不存在，不能退化到相似产品。
+            # 用户明确给出代码但库中没有对应实体，不能退化到相似产品。
             return []
-        if document_ids:
-            conditions.append("document_id in [" + ", ".join(f'"{item}"' for item in document_ids) + "]")
+        if understanding and understanding.target_document_title:
+            title_document_ids = self.repo.documents_for_title(understanding.target_document_title)
+            if not title_document_ids:
+                return []
+            document_ids = [item for item in title_document_ids if not document_ids or item in document_ids]
+        active_pairs = self.repo.active_version_pairs(document_ids or None, understanding.time_scope if understanding else None)
+        conditions: list[str] = []
+        if exact_codes and not active_pairs:
+            # 代码对应资料没有可用的活动版本（或不符合时间范围）。
+            return []
+        if not active_pairs:
+            return []
+        conditions.append("(" + " or ".join(
+            f'(document_id == "{document_id}" and version_id == "{version_id}")'
+            for document_id, version_id in active_pairs
+        ) + ")")
         if understanding and understanding.document_type_filter:
             conditions.append(f'document_type == "{understanding.document_type_filter.value}"')
+        if understanding and (understanding.question_type == "summary" or understanding.target_document_title):
+            return self._all_document_evidence(client, active_pairs)
+        from app.clients.milvus_utils import create_hybrid_search_requests, hybrid_search
+        from app.lm.embedding_utils import generate_embeddings
+        embedding = generate_embeddings([search_text])
         expression = " and ".join(conditions) or None
         reqs = create_hybrid_search_requests(embedding["dense"][0], embedding["sparse"][0], expr=expression, limit=limit)
         hits = hybrid_search(client, FINANCE_COLLECTION, reqs, ranker_weights=(0.7, 0.3), norm_score=True, limit=limit,
@@ -302,39 +363,67 @@ class FinanceService:
             result.sort(key=lambda item: item.score, reverse=True)
         return result
 
+    def _all_document_evidence(self, client: MilvusClient, pairs: list[tuple[str, str]], max_chunks: int = 5000) -> list[Evidence]:
+        """Load every chunk from the selected active versions for a full-document summary."""
+        rows: list[dict] = []
+        for document_id, version_id in pairs:
+            try:
+                rows.extend(client.query(
+                    FINANCE_COLLECTION,
+                    filter=f'document_id == "{document_id}" and version_id == "{version_id}"',
+                    output_fields=["id", "document_id", "version_id", "content", "title", "document_type", "page", "section", "block_index"],
+                ) or [])
+            except Exception:
+                continue
+        rows = sorted(rows, key=lambda row: (row.get("document_id", ""), row.get("block_index") or 0, row.get("id") or 0))[:max_chunks]
+        return [Evidence(
+            chunk_id=str(row.get("id") or ""), document_id=row["document_id"], version_id=row["version_id"],
+            content=row["content"], title=row["title"], document_type=row["document_type"],
+            locator=SourceLocator(page=row.get("page"), section=row.get("section"), block_index=row.get("block_index"), excerpt=row["content"][:240]),
+            score=1.0,
+        ) for row in rows]
     def _neighbor_context(self, client: MilvusClient, evidence: list[Evidence], max_total: int = 12) -> list[Evidence]:
         """按 block_index 补全命中切片的前后相邻切片，保持表格与条款完整。"""
         if not evidence:
             return evidence
-        merged: dict[tuple[str, int], Evidence] = {(item.document_id, item.locator.block_index or 0): item for item in evidence}
+        merged: dict[tuple[str, str, int | None, str], Evidence] = {
+            self._evidence_key(item): item for item in evidence
+        }
         for item in list(evidence):
             block_index = item.locator.block_index
             if block_index is None:
                 continue
             try:
                 rows = client.query(FINANCE_COLLECTION,
-                                    filter=f'document_id == "{item.document_id}" and block_index in [{block_index - 1}, {block_index + 1}]',
-                                    output_fields=["document_id", "version_id", "content", "title", "document_type", "page", "section", "block_index"])
+                                    filter=(f'document_id == "{item.document_id}" and '
+                                            f'version_id == "{item.version_id}" and '
+                                            f'block_index in [{block_index - 1}, {block_index + 1}]'),
+                                    output_fields=["id", "document_id", "version_id", "content", "title", "document_type", "page", "section", "block_index"])
             except Exception:
                 continue
             for row in rows or []:
-                key = (row["document_id"], row.get("block_index") or 0)
+                neighbor = Evidence(chunk_id=str(row.get("id") or ""), document_id=row["document_id"], version_id=row["version_id"],
+                                    content=row["content"], title=row["title"], document_type=row["document_type"],
+                                    locator=SourceLocator(page=row.get("page"), section=row.get("section"), block_index=row.get("block_index"), excerpt=row["content"][:240]),
+                                    score=item.score * 0.9)
+                key = self._evidence_key(neighbor)
                 if key in merged or len(merged) >= max_total:
                     continue
-                merged[key] = Evidence(chunk_id=str(row.get("id")), document_id=row["document_id"], version_id=row["version_id"],
-                                       content=row["content"], title=row["title"], document_type=row["document_type"],
-                                       locator=SourceLocator(page=row.get("page"), section=row.get("section"), block_index=row.get("block_index"), excerpt=row["content"][:240]),
-                                       score=item.score * 0.9)
+                merged[key] = neighbor
         # 先按文档分组、再按 block_index 排序，回答上下文按资料原有顺序展开。
         ordered = sorted(merged.values(), key=lambda x: (x.document_id, x.locator.block_index or 0))
         return ordered[:max_total]
+
+    @staticmethod
+    def _evidence_key(item: Evidence) -> tuple[str, str, int | None, str]:
+        return (item.document_id, item.version_id, item.locator.block_index, hashlib.sha1(item.content.encode("utf-8")).hexdigest())
 
     def _answer(self, query: str, evidence: list[Evidence], understanding: QuestionUnderstanding | None = None,
                 query_id: str | None = None) -> tuple[str, list[Citation]]:
         if not evidence:
             return "当前知识库中未检索到足够信息，建议查看正式产品文件、公告原文或咨询相关工作人员。", []
         understanding = understanding or QuestionUnderstanding(rewritten_query=query)
-        citations = [Citation(document_id=e.document_id, version_id=e.version_id, title=e.title, locator=e.locator) for e in evidence[:4]]
+        citations = [Citation(document_id=e.document_id, version_id=e.version_id, title=e.title, locator=e.locator) for e in evidence]
         if understanding.question_type == "summary" or understanding.target_document_title:
             return self._summarize(query, evidence, understanding), citations
         context = "\n\n".join(f"[{i + 1}] {e.title}（第{e.locator.page or '未标注'}页）\n{e.content}" for i, e in enumerate(evidence))
@@ -350,10 +439,19 @@ class FinanceService:
                 if content:
                     final_text += content
                     self._push(query_id, "delta", {"delta": content})
-            return final_text.strip(), citations
+            return self._sanitize_answer(final_text.strip(), citations), citations
         answer = llm.invoke(prompt).content.strip()
-        return answer, citations
+        return self._sanitize_answer(answer, citations), citations
 
+    @staticmethod
+    def _sanitize_answer(answer: str, citations: list[Citation]) -> str:
+        """Replace references outside the returned evidence list with an explicit marker."""
+        maximum = len(citations)
+        return re.sub(
+            r"\[(\d+)\]",
+            lambda match: match.group(0) if int(match.group(1)) <= maximum else "[未匹配来源]",
+            answer,
+        )
     def _summarize(self, query: str, evidence: list[Evidence], understanding: QuestionUnderstanding) -> str:
         """全文摘要：按章节分组、逐章汇总，再综合；每部分保留来源。"""
         from app.lm.lm_utils import get_llm_client
@@ -426,9 +524,7 @@ class FinanceService:
         # Milvus 集合创建/重建后处于未加载状态，插入与搜索前必须显式加载。
         if not self._milvus.has_collection(FINANCE_COLLECTION):
             raise RuntimeError(f"finance 集合 {FINANCE_COLLECTION} 创建失败")
-        load_state = self._milvus.get_load_state(FINANCE_COLLECTION)
-        if not load_state.get("state") or "Loaded" not in str(load_state.get("state")):
-            self._milvus.load_collection(FINANCE_COLLECTION)
+
 
         index_names = set(self._milvus.list_indexes(FINANCE_COLLECTION))
         params = self._milvus.prepare_index_params()
@@ -441,6 +537,9 @@ class FinanceService:
             missing = True
         if missing:
             self._milvus.create_index(FINANCE_COLLECTION, index_params=params)
+        load_state = self._milvus.get_load_state(FINANCE_COLLECTION)
+        if not load_state.get("state") or "Loaded" not in str(load_state.get("state")):
+            self._milvus.load_collection(FINANCE_COLLECTION)
 
     def _replace_vectors(self, document: FinancialDocument, version_id: str, chunks: list[dict]) -> None:
         """替换指定版本的向量。
@@ -477,47 +576,74 @@ class FinanceService:
 
     @staticmethod
     def _split(content: str) -> list[str]:
-        if len(content) <= MAX_CHUNK_CHARS:
-            return [content] if content else []
-        result, current = [], ""
+        """Split on sentence boundaries while enforcing the Milvus text limit."""
+        if not content:
+            return []
+        result: list[str] = []
+        current = ""
         for segment in re.split(r"(?<=[。！？；\n])", content):
-            if len(current) + len(segment) > MAX_CHUNK_CHARS and current:
-                result.append(current.strip())
-                current = ""
-            current += segment
+            remaining = segment
+            while remaining:
+                room = MAX_CHUNK_CHARS - len(current)
+                if len(remaining) <= room:
+                    current += remaining
+                    remaining = ""
+                else:
+                    if current:
+                        result.append(current.strip())
+                        current = ""
+                        room = MAX_CHUNK_CHARS
+                    result.append(remaining[:room].strip())
+                    remaining = remaining[room:]
         if current.strip():
             result.append(current.strip())
-        return result
+        return [part for part in result if part]
 
     @staticmethod
     def _extract_metadata(title: str, blocks: list[dict]) -> tuple[dict, list[FinancialEntity]]:
-        text = "\n".join(x["content"] for x in blocks[:20])
-        lower = f"{title}\n{text}"
-        if "季度报告" in lower or "年度报告" in lower:
+        text = "\n".join(str(x.get("content") or "") for x in blocks[:40])
+        title_text = title.strip()
+        head = f"{title_text}\n{text[:2400]}"
+        if "季度报告" in head or "年度报告" in head:
             kind = DocumentType.COMPANY_REPORT
-        elif "货币政策" in lower or "统计公报" in lower or "实施办法" in lower:
+        elif "货币政策" in head or "统计公报" in head or "实施办法" in head:
             kind = DocumentType.POLICY
-        elif "风险揭示书" in lower or "理财产品" in lower:
+        elif any(marker in title_text for marker in ("问答", "基础知识", "投资者教育", "调查报告")):
+            kind = DocumentType.EDUCATION
+        elif "风险揭示书" in title_text or ("理财" in title_text and "风险" in head):
             kind = DocumentType.WEALTH
-        elif "基金" in lower and ("产品资料概要" in lower or "招募说明书" in lower):
+        elif "基金" in head and ("产品资料概要" in head or "招募说明书" in head):
             kind = DocumentType.FUND
-        elif "问答" in lower or "教育" in lower or "知识" in lower:
+        elif "问答" in head or "教育" in head or "知识" in head:
             kind = DocumentType.EDUCATION
         else:
             kind = DocumentType.UNKNOWN
-        dates = re.findall(r"20\d{2}[年\-/.]\s*\d{1,2}[月\-/.]\s*\d{1,2}日?", text)
-        codes = re.findall(r"(?<!\d)(?:\d{6}|[A-Z]{4,}\d{3,})(?!\d)", text)
+
+        date_pattern = r"20\d{2}[年\-/.]\s*\d{1,2}[月\-/.]\s*\d{1,2}日?"
+        publish_date = None
+        for match in re.finditer(date_pattern, text):
+            context = text[max(0, match.start() - 24):match.start()]
+            if re.search(r"送出|披露|发布日期|发布日期|发布于|公布|发布", context):
+                publish_date = match.group(0)
+                break
+        code_pattern = r"(?<!\d)(?:\d{6}|[A-Z]{4,}\d{3,})(?!\d)"
+        code_labels = r"(?:下属)?(?:基金|份额|产品|证券|股票)(?:代码|编号)"
+        codes: list[str] = []
+        for match in re.finditer(code_pattern, text):
+            context = text[max(0, match.start() - 24):match.end() + 8]
+            if re.search(code_labels, context) and match.group(0) not in codes:
+                codes.append(match.group(0))
         period_match = re.search(r"20\d{2}年(?:第?[一二三四1-4]季度|年度)", text)
         metadata = {
             "document_type": kind,
-            "publish_date": dates[0] if dates else None,
+            "publish_date": publish_date,
             "report_period": period_match.group(0) if period_match else None,
             "codes": codes,
         }
         entities: list[FinancialEntity] = []
         if kind in {DocumentType.FUND, DocumentType.WEALTH}:
-            product_match = re.match(r"(.+?)(?:基金产品资料概要|产品资料概要|风险揭示书)", title)
-            product_name = product_match.group(1).strip() if product_match else title
+            product_match = re.match(r"(.+?)(?:基金产品资料概要|产品资料概要|风险揭示书)", title_text)
+            product_name = product_match.group(1).strip() if product_match else title_text
             metadata["product_name"] = product_name
             entities.append(FinancialEntity(name=product_name, entity_type="product", code=codes[0] if codes else None))
             if kind == DocumentType.FUND and len(codes) > 1:
@@ -535,9 +661,9 @@ class FinanceService:
                     if institution not in seen_institutions:
                         entities.append(FinancialEntity(name=institution, entity_type="institution", role=role))
                         seen_institutions.add(institution)
-        else:
-            company_match = re.search(r"([^\n]{2,40}?股份有限公司)", f"{title}\n{text[:800]}")
-            entity_name = company_match.group(1).strip() if company_match else title
+        elif kind == DocumentType.COMPANY_REPORT:
+            company_match = re.search(r"([^\n]{2,40}?股份有限公司)", f"{title_text}\n{text[:800]}")
+            entity_name = company_match.group(1).strip() if company_match else title_text
             metadata["subject_name"] = entity_name
             entities.append(FinancialEntity(name=entity_name, entity_type="company", code=codes[0] if codes else None))
         return metadata, entities

@@ -73,6 +73,13 @@ class FinanceApiContractTest(unittest.TestCase):
             self.assertEqual(ref.rsplit("/", 1)[-1], model)
             self.assertIn(model, self.schema["components"]["schemas"])
 
+    def test_conflict_and_version_query_contracts_are_explicit(self) -> None:
+        query_responses = self.schema["paths"]["/api/v1/queries"]["post"]["responses"]
+        self.assertIn("409", query_responses)
+        document_type = self.schema["components"]["schemas"]["DocumentType"]["enum"]
+        self.assertEqual(set(document_type), {"fund_product", "wealth_management", "company_report", "policy", "education_or_faq", "unknown"})
+        file_parameters = self.schema["paths"]["/api/v1/documents/{document_id}/file"]["get"]["parameters"]
+        self.assertIn("version_id", {item["name"] for item in file_parameters})
     def test_sse_operation_declares_event_stream_content(self) -> None:
         response = self.schema["paths"]["/api/v1/queries/{query_id}/events"]["get"]["responses"]["200"]
         self.assertIn("text/event-stream", response["content"])

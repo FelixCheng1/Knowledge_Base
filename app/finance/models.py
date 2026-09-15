@@ -114,6 +114,7 @@ class ImportTask(BaseModel):
 class Session(BaseModel):
     session_id: str = Field(default_factory=new_id)
     title: str = "新对话"
+    active_query_id: str | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 

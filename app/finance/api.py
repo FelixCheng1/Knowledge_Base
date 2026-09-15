@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.finance.models import (
-    DocumentListResponse, DocumentStatus, ErrorResponse, FinancialDocument,
+    DocumentListResponse, DocumentStatus, DocumentType, ErrorResponse, FinancialDocument,
     HealthResponse, ImportSubmissionResponse, ImportTask, MessageListResponse,
     QueryRequest, QueryResult, RetryImportResponse, Session, SessionListResponse,
 )
@@ -38,7 +38,7 @@ def get_service() -> FinanceService:
 
 class DocumentPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
-    document_type: str | None = None
+    document_type: DocumentType | None = None
     metadata: dict | None = None
 
 
@@ -85,11 +85,11 @@ async def upload_document(
 
 @router.get("/documents", tags=["Documents"], summary="分页前的资料列表", response_model=DocumentListResponse, operation_id="listDocuments")
 def list_documents(
-    status: str | None = None,
-    document_type: str | None = None,
+    status: DocumentStatus | None = None,
+    document_type: DocumentType | None = None,
     service: FinanceService = Depends(get_service),
 ):
-    return {"items": service.repo.list_documents(status, document_type)}
+    return {"items": service.repo.list_documents(status.value if status else None, document_type.value if document_type else None)}
 
 
 @router.get("/documents/{document_id}", tags=["Documents"], summary="读取资料详情", response_model=FinancialDocument, operation_id="getDocument", responses={404: {"model": ErrorResponse}})
@@ -140,15 +140,16 @@ def disable_document(document_id: str, service: FinanceService = Depends(get_ser
 
 
 @router.get("/documents/{document_id}/file", tags=["Documents"], summary="下载原始资料", operation_id="downloadDocument", responses={404: {"model": ErrorResponse}})
-def original_file(document_id: str, service: FinanceService = Depends(get_service)):
+def original_file(document_id: str, version_id: str | None = Query(default=None, min_length=1, max_length=64, description="引用对应的版本 ID；省略时使用活动版本"), service: FinanceService = Depends(get_service)):
     document = service.repo.get_document(document_id)
-    if not document or not document.active_version_id:
+    selected_version_id = version_id or (document.active_version_id if document else None)
+    if not document or not selected_version_id:
         raise _not_found("资料文件")
-    version = next((item for item in document.versions if item.version_id == document.active_version_id), None)
+    version = next((item for item in document.versions if item.version_id == selected_version_id), None)
     if version and Path(version.stored_path).exists():
         return FileResponse(version.stored_path, filename=version.original_name)
     try:
-        url = service.original_file_url(document_id)
+        url = service.original_file_url(document_id, version_id)
     except KeyError:
         url = None
     if not url:
@@ -198,7 +199,7 @@ def delete_session(session_id: str, service: FinanceService = Depends(get_servic
         raise _not_found("会话")
 
 
-@router.post("/queries", tags=["Queries"], summary="提交金融资料问答", response_model=QueryResult, status_code=202, operation_id="createQuery")
+@router.post("/queries", tags=["Queries"], summary="提交金融资料问答", response_model=QueryResult, status_code=202, operation_id="createQuery", responses={409: {"model": ErrorResponse}})
 def create_query(request: QueryRequest, background_tasks: BackgroundTasks, service: FinanceService = Depends(get_service)):
     try:
         result = service.submit_query(request.query, request.session_id)
@@ -226,7 +227,7 @@ async def query_events(query_id: str, request: Request, service: FinanceService 
     - 后台任务把 progress/delta 事件写入 query_id 对应的队列，这里实时转发；
     - 断线重连时若 final 已持久化，直接补发 final 后结束，保证不丢结果。
     """
-    from app.utils.sse_utils import get_sse_queue, remove_sse_queue
+    from app.utils.sse_utils import create_sse_queue, get_sse_queue, remove_sse_queue
 
     async def event_stream():
         existing = service.repo.get_query(query_id)
@@ -237,10 +238,8 @@ async def query_events(query_id: str, request: Request, service: FinanceService 
             # 断线重连或刷新后补发最终结果。
             yield f"event: final\ndata: {json.dumps(existing.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             return
-        stream_queue = get_sse_queue(query_id)
-        if stream_queue is None:
-            yield "event: error\ndata: {\"error\": \"该查询未开启流式推送，请直接读取结果接口\"}\n\n"
-            return
+        # 断线后允许重新建立队列；后台任务的最终状态始终保存在 Mongo。
+        stream_queue = get_sse_queue(query_id) or create_sse_queue(query_id)
         loop = asyncio.get_running_loop()
         try:
             while True:
@@ -249,6 +248,10 @@ async def query_events(query_id: str, request: Request, service: FinanceService 
                 try:
                     message = await loop.run_in_executor(None, stream_queue.get, True, 1.0)
                 except queue.Empty:
+                    current = service.repo.get_query(query_id)
+                    if current and current.status in {"completed", "failed", "clarification_needed"}:
+                        yield f"event: final\ndata: {json.dumps(current.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+                        break
                     continue
                 event, data = message["event"], message["data"]
                 yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"

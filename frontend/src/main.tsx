@@ -26,7 +26,7 @@ function Chat({ documents }: { documents: Document[] }) {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [citations, setCitations] = useState<Citation[]>([])
-  const [preview, setPreview] = useState<Document>()
+  const [preview, setPreview] = useState<{ document: Document; versionId: string }>()
   const navigate = useNavigate()
   const { search } = useLocation()
   const selectedSessionId = new URLSearchParams(search).get('session')
@@ -50,26 +50,56 @@ function Chat({ documents }: { documents: Document[] }) {
     setQuestion(''); setLoading(true); setCitations([]); setProgress('理解问题')
     setMessages(old => [...old, { message_id: crypto.randomUUID(), session_id: sessionId ?? '', role: 'user', content, citations: [], created_at: new Date().toISOString() }])
     try {
-      const queued = await api.ask(content, sessionId); setSessionId(queued.session_id); navigate(`/?session=${queued.session_id}`, { replace: true })
+      const queued = await api.ask(content, sessionId)
+      setSessionId(queued.session_id)
+      const shouldNavigate = !sessionId
       const assistantId = crypto.randomUUID()
       setMessages(old => [...old, { message_id: assistantId, session_id: queued.session_id, role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }])
-      const stream = new EventSource(api.eventsUrl(queued.query_id))
+      let finished = false
       const close = () => { setLoading(false); setProgress(''); stream.close() }
       const finalize = (result: QueryResult) => {
+        if (finished) return
+        finished = true
         setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: result.answer || result.error || '查询失败', citations: result.citations ?? [] } : item))
-        setCitations(result.citations ?? []); close()
+        setCitations(result.citations ?? [])
+        close()
+        if (shouldNavigate) navigate(`/?session=${queued.session_id}`, { replace: true })
       }
+      const handleError = (errorText: string) => {
+        if (finished) return
+        finished = true
+        setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: errorText || '查询失败' } : item))
+        close()
+      }
+      const recover = async () => {
+        for (let attempt = 0; attempt < 60 && !finished; attempt += 1) {
+          try {
+            const result = await api.result(queued.query_id)
+            if (result.status !== 'processing') { finalize(result); return }
+          } catch { /* 网络暂时不可用，下一轮继续读取持久化状态 */ }
+          await new Promise(resolve => window.setTimeout(resolve, 1000))
+        }
+        if (!finished) {
+          finished = true
+          message.warning('查询仍在后台处理，可稍后从会话历史查看结果')
+          close()
+        }
+      }
+      const stream = new EventSource(api.eventsUrl(queued.query_id))
       stream.addEventListener('progress', event => { const { status } = JSON.parse((event as MessageEvent<string>).data); setProgress(status) })
       stream.addEventListener('delta', event => { const { delta } = JSON.parse((event as MessageEvent<string>).data); setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: item.content + delta } : item)) })
       stream.addEventListener('final', event => finalize(JSON.parse((event as MessageEvent<string>).data) as QueryResult))
-      stream.addEventListener('error', event => { const { error } = JSON.parse((event as MessageEvent<string>).data || '{}'); setMessages(old => old.map(item => item.message_id === assistantId ? { ...item, content: error || '查询失败' } : item)); close() })
-      stream.onerror = () => { stream.close(); api.result(queued.query_id).then(result => { if (result.status !== 'processing') finalize(result); else close() }).catch(close) }
-    } catch (error) {
+      stream.addEventListener('error', event => {
+        const payload = (event as MessageEvent<string>).data
+        if (!payload) return
+        try { handleError(JSON.parse(payload).error || '查询失败') } catch { handleError('查询失败') }
+      })
+      stream.onerror = () => { stream.close(); void recover() }    } catch (error) {
       message.error(error instanceof Error ? error.message : '提交失败')
       setMessages(old => old.filter(item => item.role !== 'assistant' || item.content)); setLoading(false); setProgress('')
     }
   }
-  return <div className="workspace"><main className="chat"><header><Text className="eyebrow">知识库内资料 · 可核对引用</Text><Title level={2}>金融资料问答</Title><Paragraph>可查询基金产品、理财风险揭示、公司财报、政策和投资者教育资料。</Paragraph></header><div className="messages">{messages.length === 0 ? <Empty description="从一条具体的问题开始，例如：华夏债券 C 的赎回费如何计算？" /> : messages.map(item => <article className={`bubble ${item.role}`} key={item.message_id}><Text type="secondary">{item.role === 'user' ? '你' : '掌柜智库'}</Text><Paragraph>{item.content}</Paragraph>{item.citations.length > 0 && <Space wrap>{item.citations.map(c => <Tag key={c.citation_id} color="cyan" onClick={() => setPreview(documents.find(d => d.document_id === c.document_id))}>{c.title}{c.locator.page ? ` · 第 ${c.locator.page} 页` : ''}</Tag>)}</Space>}</article>)}{loading && <div className="thinking"><Spin size="small" /> {progress || '正在处理'}…</div>}</div><div className="composer"><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} value={question} onChange={e => setQuestion(e.target.value)} onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); void ask() } }} placeholder="输入金融资料问题；系统只依据已导入资料回答" /><Button type="primary" icon={<SendOutlined />} onClick={() => void ask()} loading={loading}>发送</Button></div></main><aside className="sources"><Text className="eyebrow">来源预览</Text><Title level={4}>回答依据</Title>{citations.length ? <List dataSource={citations} renderItem={c => <List.Item><div><Text strong>{c.title}</Text><br /><Text type="secondary">{c.locator.page ? `第 ${c.locator.page} 页` : c.locator.section || '资料正文'}</Text><Paragraph ellipsis={{ rows: 3 }}>{c.locator.excerpt}</Paragraph></div></List.Item>} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="回答后在此查看引用" />}</aside><Modal open={Boolean(preview)} title={preview?.title} onCancel={() => setPreview(undefined)} footer={null} width="80vw"><iframe className="preview" src={preview ? api.fileUrl(preview.document_id) : ''} title="资料原文" /></Modal></div>
+  return <div className="workspace"><main className="chat"><header><Text className="eyebrow">知识库内资料 · 可核对引用</Text><Title level={2}>金融资料问答</Title><Paragraph>可查询基金产品、理财风险揭示、公司财报、政策和投资者教育资料。</Paragraph></header><div className="messages">{messages.length === 0 ? <Empty description="从一条具体的问题开始，例如：华夏债券 C 的赎回费如何计算？" /> : messages.map(item => <article className={`bubble ${item.role}`} key={item.message_id}><Text type="secondary">{item.role === 'user' ? '你' : '掌柜智库'}</Text><Paragraph>{item.content}</Paragraph>{item.citations.length > 0 && <Space wrap>{item.citations.map(c => <Tag key={c.citation_id} color="cyan" onClick={() => setPreview((document => document ? { document, versionId: c.version_id } : undefined)(documents.find(d => d.document_id === c.document_id)))}>{c.title}{c.locator.page ? ` · 第 ${c.locator.page} 页` : ''}</Tag>)}</Space>}</article>)}{loading && <div className="thinking"><Spin size="small" /> {progress || '正在处理'}…</div>}</div><div className="composer"><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} value={question} onChange={e => setQuestion(e.target.value)} onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); void ask() } }} placeholder="输入金融资料问题；系统只依据已导入资料回答" /><Button type="primary" icon={<SendOutlined />} onClick={() => void ask()} loading={loading}>发送</Button></div></main><aside className="sources"><Text className="eyebrow">来源预览</Text><Title level={4}>回答依据</Title>{citations.length ? <List dataSource={citations} renderItem={c => <List.Item><div><Text strong>{c.title}</Text><br /><Text type="secondary">{c.locator.page ? `第 ${c.locator.page} 页` : c.locator.section || '资料正文'}</Text><Paragraph ellipsis={{ rows: 3 }}>{c.locator.excerpt}</Paragraph></div></List.Item>} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="回答后在此查看引用" />}</aside><Modal open={Boolean(preview)} title={preview?.document.title} onCancel={() => setPreview(undefined)} footer={null} width="80vw"><iframe className="preview" src={preview ? api.fileUrl(preview.document.document_id, preview.versionId) : ''} title="资料原文" /></Modal></div>
 }
 
 function Documents({ documents, onRefresh }: { documents: Document[]; onRefresh: () => Promise<void> }) {

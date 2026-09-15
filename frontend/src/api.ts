@@ -17,5 +17,5 @@ export const api = {
   ask: (query: string, session_id?: string) => call<QueryResult>('/queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, session_id, stream: true }) }),
   result: (id: string) => call<QueryResult>(`/queries/${id}`),
   eventsUrl: (id: string) => `${base}/queries/${id}/events`,
-  fileUrl: (id: string) => `${base}/documents/${id}/file`,
+  fileUrl: (id: string, versionId?: string) => `${base}/documents/${id}/file${versionId ? `?version_id=${encodeURIComponent(versionId)}` : ""}`
 }

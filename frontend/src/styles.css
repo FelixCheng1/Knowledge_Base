@@ -172,6 +172,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .document-meta .ant-tag { color: #527086; background: #f1f5f6; }
 .document-actions { max-width: 380px; text-align: right; }
 .document-actions .ant-btn { font-size: 12px; }
+.document-disabled-note { color: #8a9aaa; font-size: 12px; }
 .document-error { margin-top: 10px; }
 .document-error .ant-alert-message { font-size: 12px; }
 .document-divider { margin: 14px 0 10px; }

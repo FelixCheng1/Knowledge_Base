@@ -103,7 +103,7 @@ def get_document(document_id: str, service: FinanceService = Depends(get_service
 
 @router.post(
     "/documents/{document_id}/versions", tags=["Documents"], summary="异步上传资料新版本", response_model=ImportSubmissionResponse,
-    status_code=202, operation_id="createDocumentVersion", responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    status_code=202, operation_id="createDocumentVersion", responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 async def upload_document_version(
     document_id: str,
@@ -119,6 +119,8 @@ async def upload_document_version(
         document, task = service.create_version_import(document_id, file.filename, await file.read())
     except KeyError:
         raise _not_found("资料")
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if task.status != DocumentStatus.ACTIVE:
         background_tasks.add_task(service.import_document, task.task_id)
     return {"document": document, "task": task}
@@ -180,6 +182,8 @@ def retry_import(task_id: str, background_tasks: BackgroundTasks, service: Finan
     if not task:
         raise _not_found("导入任务")
     document = service.repo.get_document(task.document_id)
+    if document and document.status == DocumentStatus.DISABLED:
+        raise HTTPException(status_code=409, detail="资料已停用，不能重试导入或重新启用")
     if task.status == DocumentStatus.PROCESSING or (task.status == DocumentStatus.ACTIVE and document and document.active_version_id == task.version_id):
         raise HTTPException(status_code=409, detail="任务正在处理或版本已经生效")
     background_tasks.add_task(service.import_document, task_id)

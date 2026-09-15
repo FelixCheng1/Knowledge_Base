@@ -92,6 +92,7 @@ class FinanceApiContractTest(unittest.TestCase):
         self.assertIn("document_type", parameters)
         version_upload = self.schema["paths"]["/api/v1/documents/{document_id}/versions"]["post"]
         self.assertIn("multipart/form-data", version_upload["requestBody"]["content"])
+        self.assertIn("409", version_upload["responses"])
         file_response = self.schema["paths"]["/api/v1/documents/{document_id}/file"]["get"]["responses"]["200"]
         self.assertIn("application/octet-stream", file_response["content"])
         version_file_response = self.schema["paths"]["/api/v1/documents/{document_id}/versions/{version_id}/file"]["get"]["responses"]["200"]

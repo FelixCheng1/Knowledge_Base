@@ -563,10 +563,11 @@ function Documents({ documents, onRefresh }: { documents: Document[]; onRefresh:
           <div className="document-info"><div className="document-title-row"><Title level={5} ellipsis={{ tooltip: doc.title }}>{doc.title}</Title><Tag icon={meta.icon} color={meta.color}>{meta.label}</Tag></div><Space wrap className="document-meta"><Tag bordered={false}>{documentTypeLabel(doc.document_type)}</Tag>{reportPeriod && <Text type="secondary">报告期：{reportPeriod}</Text>}{publishDate && <Text type="secondary">发布日期：{publishDate}</Text>}{task && <Text type="secondary">{task.stage}</Text>}</Space>{doc.error && <Alert className="document-error" type="error" showIcon message={doc.error} />}</div>
           <div className="document-actions"><Space wrap>
             <Button type="default" icon={<EditOutlined />} onClick={() => openEdit(doc)}>修正</Button>
-            <Upload beforeUpload={file => uploadVersion(doc, file)} showUploadList={false} accept=".pdf,.doc,.docx,.md"><Button icon={<ReloadOutlined />}>新版本</Button></Upload>
+            {doc.status !== 'disabled' && <Upload beforeUpload={file => uploadVersion(doc, file)} showUploadList={false} accept=".pdf,.doc,.docx,.md"><Button icon={<ReloadOutlined />}>新版本</Button></Upload>}
             <Button icon={<EyeOutlined />} href={api.fileUrl(doc.document_id, doc.active_version_id ?? undefined)} target="_blank">原文</Button>
             {doc.status !== 'disabled' && <Button danger type="text" onClick={() => api.patchDocument(doc.document_id, { status: 'disabled' }).then(onRefresh).catch(err => message.error(err instanceof Error ? err.message : '停用失败'))}>停用</Button>}
-            {failedTask && <Button type="link" icon={<ReloadOutlined />} onClick={() => void retry(failedTask)}>重试处理</Button>}
+            {failedTask && doc.status !== 'disabled' && <Button type="link" icon={<ReloadOutlined />} onClick={() => void retry(failedTask)}>重试处理</Button>}
+            {doc.status === 'disabled' && <Text type="secondary" className="document-disabled-note">已停用，不能重新启用</Text>}
           </Space></div>
         </div>
         <Divider className="document-divider" />

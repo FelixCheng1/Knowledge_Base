@@ -61,6 +61,8 @@ class FinanceService:
     def create_version_import(self, document_id: str, upload_name: str, content: bytes) -> tuple[FinancialDocument, ImportTask]:
         """为已有资料创建候选版本；旧活动版本在新版本成功前始终可查询。"""
         document = self._must_document(document_id)
+        if document.status == DocumentStatus.DISABLED:
+            raise PermissionError("资料已停用，不能上传新版本或重新启用")
         checksum = hashlib.sha256(content).hexdigest()
         existing = next((version for version in document.versions if version.checksum == checksum), None)
         if existing:
@@ -89,6 +91,9 @@ class FinanceService:
         task = self._must_task(task_id)
         document = self._must_document(task.document_id)
         version = next(v for v in document.versions if v.version_id == task.version_id)
+        if document.status == DocumentStatus.DISABLED:
+            self._set_task(task, DocumentStatus.FAILED, "资料已停用，未重新启用", "停用资料不能继续导入或激活新版本")
+            return
         self._set_task(task, DocumentStatus.PROCESSING, "正在解析资料")
         if not document.active_version_id:
             self.repo.update_document(document.document_id, {"status": DocumentStatus.PROCESSING.value, "error": None})

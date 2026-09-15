@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app.finance.models import DocumentType, DocumentVersion, Evidence, FinancialDocument, FinancialEntity, Message, QuestionUnderstanding, SourceLocator, session_title_from_query
+from app.finance.models import DocumentStatus, DocumentType, DocumentVersion, Evidence, FinancialDocument, FinancialEntity, ImportTask, Message, QuestionUnderstanding, SourceLocator, session_title_from_query
 from app.finance.service import FinanceService
 from app.finance.repository import FinanceRepository
 
@@ -154,6 +154,28 @@ class FinanceServiceRegressionTest(unittest.TestCase):
         self.assertIn('(document_id == "doc-1" and version_id == "v1")', expression)
         self.assertIn('(document_id == "doc-2" and version_id == "v3")', expression)
         self.assertNotIn("version_id == \"v2\"", expression)
+
+    def test_disabled_document_rejects_new_version_import(self) -> None:
+        self.repo.get_document.return_value = FinancialDocument(
+            document_id="doc-disabled", title="已停用资料", status=DocumentStatus.DISABLED,
+        )
+        with self.assertRaisesRegex(PermissionError, "不能上传新版本"):
+            self.service.create_version_import("doc-disabled", "new.pdf", b"content")
+
+    def test_import_task_cannot_reactivate_disabled_document(self) -> None:
+        task = ImportTask(task_id="task-disabled", document_id="doc-disabled", version_id="version-1")
+        document = FinancialDocument(
+            document_id="doc-disabled", title="已停用资料", status=DocumentStatus.DISABLED,
+            active_version_id="version-1",
+            versions=[DocumentVersion(version_id="version-1", original_name="old.pdf", stored_path="old.pdf", checksum="old")],
+        )
+        self.repo.get_task.return_value = task
+        self.repo.get_document.return_value = document
+        self.service.import_document("task-disabled")
+        self.assertEqual(task.status, DocumentStatus.FAILED)
+        self.assertIn("停用", task.error or "")
+        self.assertEqual(document.status, DocumentStatus.DISABLED)
+        self.repo.save_task.assert_called_once_with(task)
 
     def test_manual_metadata_overrides_survive_reextraction(self) -> None:
         merged = self.service._merge_metadata({'publish_date': '自动日期', 'report_period': '2026年第一季度'}, {'publish_date': '人工核对日期', 'subject_name': '人工主体'})

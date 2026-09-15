@@ -13,13 +13,14 @@ const { Text, Title, Paragraph } = Typography
 function AppShell() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [documents, setDocuments] = useState<Document[]>([])
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
+  const navigate = useNavigate()
   const refresh = async () => { setSessions((await api.sessions()).items); setDocuments((await api.documents()).items) }
   useEffect(() => { void refresh() }, [])
-  return <Layout className="frame"><Sider width={272} theme="light" className="side"><div className="brand"><BookOutlined /><span>掌柜智库</span><small>金融资料查询</small></div><Link to="/"><Button type="primary" icon={<PlusOutlined />} block>新建对话</Button></Link><Menu mode="inline" selectedKeys={pathname.startsWith('/documents') ? ['documents'] : ['chat']} items={[{ key: 'chat', icon: <SendOutlined />, label: <Link to="/">问答工作台</Link> }, { key: 'documents', icon: <FolderOpenOutlined />, label: <Link to="/documents">资料管理</Link> }]} /><div className="side-label">最近会话</div><List size="small" dataSource={sessions.slice(0, 8)} locale={{ emptyText: '暂无会话' }} renderItem={item => <List.Item className="session-item"><Link to={`/?session=${item.session_id}`}>{item.title}</Link></List.Item>} /></Sider><Content><Routes><Route path="/" element={<Chat documents={documents} />} /><Route path="/documents" element={<Documents documents={documents} onRefresh={refresh} />} /></Routes></Content></Layout>
+  return <Layout className="frame"><Sider width={272} theme="light" className="side"><div className="brand"><BookOutlined /><span>掌柜智库</span><small>金融资料查询</small></div><Link to="/"><Button type="primary" icon={<PlusOutlined />} block>新建对话</Button></Link><Menu mode="inline" selectedKeys={pathname.startsWith('/documents') ? ['documents'] : ['chat']} items={[{ key: 'chat', icon: <SendOutlined />, label: <Link to="/">问答工作台</Link> }, { key: 'documents', icon: <FolderOpenOutlined />, label: <Link to="/documents">资料管理</Link> }]} /><div className="side-label">最近会话</div><List size="small" dataSource={sessions.slice(0, 8)} locale={{ emptyText: '暂无会话' }} renderItem={item => <List.Item className="session-item" actions={[<Button key="delete" type="text" size="small" danger onClick={() => api.deleteSession(item.session_id).then(async () => { if (new URLSearchParams(search).get('session') === item.session_id) navigate('/'); await refresh() }).catch(err => message.error(err instanceof Error ? err.message : '删除失败'))}>删除</Button>]}><Link to={`/?session=${item.session_id}`}>{item.title}</Link></List.Item>} /></Sider><Content><Routes><Route path="/" element={<Chat documents={documents} onRefresh={refresh} />} /><Route path="/documents" element={<Documents documents={documents} onRefresh={refresh} />} /></Routes></Content></Layout>
 }
 
-function Chat({ documents }: { documents: Document[] }) {
+function Chat({ documents, onRefresh }: { documents: Document[]; onRefresh: () => Promise<void> }) {
   const [sessionId, setSessionId] = useState<string>()
   const [messages, setMessages] = useState<Message[]>([])
   const [question, setQuestion] = useState('')
@@ -64,6 +65,7 @@ function Chat({ documents }: { documents: Document[] }) {
         setCitations(result.citations ?? [])
         close()
         if (shouldNavigate) navigate(`/?session=${queued.session_id}`, { replace: true })
+        void onRefresh()
       }
       const handleError = (errorText: string) => {
         if (finished) return

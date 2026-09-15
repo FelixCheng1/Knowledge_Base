@@ -4,6 +4,7 @@ const base = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8002/api/v1'
 const call = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${base}${path}`, init)
   if (!response.ok) throw new Error((await response.json().catch(() => ({ detail: response.statusText }))).detail)
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
@@ -11,6 +12,7 @@ export const api = {
   sessions: () => call<{ items: Session[] }>('/sessions'),
   createSession: () => call<Session>('/sessions', { method: 'POST' }),
   messages: (id: string) => call<{ items: Message[] }>(`/sessions/${id}/messages`),
+  deleteSession: (id: string) => call<void>(`/sessions/${id}`, { method: 'DELETE' }),
   documents: (filters?: { status?: string; document_type?: string }) => {
     const params = new URLSearchParams()
     if (filters?.status) params.set('status', filters.status)

@@ -221,7 +221,17 @@ def get_query(query_id: str, service: FinanceService = Depends(get_service)):
     return result
 
 
-@router.get("/queries/{query_id}/events", tags=["Queries"], summary="订阅问答进度与最终结果", response_class=StreamingResponse, operation_id="streamQueryEvents", responses={200: {"description": "SSE，事件类型为 progress、delta、final 或 error", "content": {"text/event-stream": {}}}})
+@router.get(
+    "/queries/{query_id}/events", tags=["Queries"], summary="订阅问答进度与最终结果",
+    response_class=StreamingResponse, operation_id="streamQueryEvents",
+    responses={200: {"description": "SSE；每条消息包含 event 行和 JSON data 行，事件为 progress、delta、final 或 error。",
+                     "content": {"text/event-stream": {"schema": {"type": "string"}, "examples": {
+                         "progress": {"summary": "处理阶段", "value": "event: progress\ndata: {\"status\":\"理解问题\"}\n\n"},
+                         "delta": {"summary": "答案增量", "value": "event: delta\ndata: {\"delta\":\"资料显示……\"}\n\n"},
+                         "final": {"summary": "最终结果", "value": "event: final\ndata: {\"query_id\":\"…\",\"status\":\"completed\"}\n\n"},
+                         "error": {"summary": "失败事件", "value": "event: error\ndata: {\"error\":\"查询失败\"}\n\n"}
+                     }}}}}
+)
 async def query_events(query_id: str, request: Request, service: FinanceService = Depends(get_service)):
     """订阅指定查询的事件流。
 
